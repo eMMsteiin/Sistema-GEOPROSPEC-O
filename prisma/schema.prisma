@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+enum StoreType {
+  MULTIBRAND
+  OWN_BRAND
+}
+
+enum ProspectStatus {
+  NOT_VISITED
+  VISITED
+  PARTNER
+  DECLINED
+}
+
+enum EstablishmentKind {
+  PHYSICAL_STORE
+  INDIVIDUAL_RESELLER
+}
+
+model Store {
+  id                    String            @id @default(cuid())
+  cnpj                  String            @unique
+  name                  String
+  address               String?
+  neighborhood          String?
+  city                  String
+  state                 String            @default("PR")
+  lat                   Float?
+  lng                   Float?
+  distanceKm            Float?
+  storeType             StoreType         @default(MULTIBRAND)
+  storeTypeAuto         Boolean           @default(true) // false = corrigido manualmente, import não sobrescreve mais
+  establishmentKind     EstablishmentKind @default(PHYSICAL_STORE)
+  establishmentKindAuto Boolean           @default(true) // false = corrigido manualmente, import não sobrescreve mais
+  status                ProspectStatus    @default(NOT_VISITED)
+  phone                 String?
+  notes                 String?
+  cnaeActive            Boolean           @default(true) // situação cadastral ativa na Receita
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  @@index([city, neighborhood])
+  @@index([status])
+}
+
+model RegionIncome {
+  id           String   @id @default(cuid())
+  city         String
+  neighborhood String? // null = valor a nível municipal (todas as cidades do MVP)
+  avgIncome    Float // R$, rendimento médio mensal na região
+  source       String? // ex.: "Censo 2022 IBGE - SIDRA tabela 10295 (municipal)"
+  updatedAt    DateTime @updatedAt
+
+  @@unique([city, neighborhood])
+}
