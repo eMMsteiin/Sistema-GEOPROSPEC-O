@@ -2,17 +2,13 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { cityTier } from '@/lib/pdv';
-import type { EstablishmentKind, Prisma, ProspectStatus, StoreType } from '@prisma/client';
+import { EstablishmentKind, ProspectStatus, StoreType } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
-const PROSPECT_STATUSES: ProspectStatus[] = [
-  'NOT_VISITED',
-  'VISITED',
-  'PARTNER',
-  'DECLINED',
-  'REQUESTED_TO_REPS',
-];
-const STORE_TYPES: StoreType[] = ['MULTIBRAND', 'OWN_BRAND'];
-const ESTABLISHMENT_KINDS: EstablishmentKind[] = ['PHYSICAL_STORE', 'INDIVIDUAL_RESELLER'];
+// Derivados do enum do Prisma — ver comentário em ../route.ts.
+const PROSPECT_STATUSES = Object.values(ProspectStatus);
+const STORE_TYPES = Object.values(StoreType);
+const ESTABLISHMENT_KINDS = Object.values(EstablishmentKind);
 
 export async function PATCH(
   req: Request,

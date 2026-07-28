@@ -79,12 +79,21 @@ export function classifyStoreType(name: string): 'OWN_BRAND' | 'MULTIBRAND' {
 }
 
 /**
- * MEIs revendedores (Avon/Natura/Jequiti etc.) não têm nome fantasia próprio: a
- * Receita gera a razão social como "NN.NNN.NNN Nome Da Pessoa" (CNPJ-básico
- * formatado com pontos + nome do titular) — ex.: "61.931.719 Criseldi Weber
- * Brandao". Lojas de verdade têm nome comercial ("Touti Fragrances Ltda").
+ * MEIs revendedores (Avon/Natura/Jequiti etc.) não têm nome fantasia próprio, e
+ * a Receita gera a razão social a partir dos dados do titular. Dois formatos
+ * aparecem na base:
+ *
+ *  1. CNPJ-básico + nome — "61.931.719 Criseldi Weber Brandao"
+ *  2. nome + CPF        — "Rosangela Maria da Silva 87614898915"
+ *
+ * Loja de verdade tem nome comercial ("Touti Fragrances Ltda"). Os 11 dígitos
+ * seguidos do segundo padrão são específicos o bastante pra não pegar nome
+ * comercial com número no fim ("Loja 2000" tem 4 dígitos, não 11).
  */
-const MEI_NAME_PATTERN = /^\d{2}\.\d{3}\.\d{3}\s+\S/;
+const MEI_NAME_PATTERNS = [
+  /^\d{2}\.\d{3}\.\d{3}\s+\S/, // CNPJ-básico na frente
+  /\s\d{11}$/, // CPF no fim
+];
 
 /**
  * Classificação automática de loja física vs. revendedor individual pelo padrão
@@ -93,7 +102,74 @@ const MEI_NAME_PATTERN = /^\d{2}\.\d{3}\.\d{3}\s+\S/;
  * manualmente na UI (establishmentKindAuto = false).
  */
 export function classifyEstablishmentKind(name: string): 'PHYSICAL_STORE' | 'INDIVIDUAL_RESELLER' {
-  return MEI_NAME_PATTERN.test(name.trim()) ? 'INDIVIDUAL_RESELLER' : 'PHYSICAL_STORE';
+  const trimmed = name.trim();
+  return MEI_NAME_PATTERNS.some((re) => re.test(trimmed)) ? 'INDIVIDUAL_RESELLER' : 'PHYSICAL_STORE';
+}
+
+// ---------------------------------------------------------------------------
+// Endereço
+// ---------------------------------------------------------------------------
+
+/**
+ * A Receita usa vários marcadores pra "sem número". Normaliza todos pra null
+ * em vez de gravar "00" ou "S/N" como se fosse número de porta.
+ */
+const NO_NUMBER = new Set(['', '0', '00', '000', 'S/N', 'SN', 'S N', 'SEM NUMERO', 'SEM NÚMERO']);
+
+export function normalizeHouseNumber(raw: string | null | undefined): string | null {
+  const v = (raw ?? '').trim().toUpperCase();
+  return NO_NUMBER.has(v) ? null : (raw ?? '').trim() || null;
+}
+
+/** CEP com máscara: "83020304" → "83020-304". Devolve null se não tiver 8 dígitos. */
+export function formatCep(raw: string | null | undefined): string | null {
+  const digits = (raw ?? '').replace(/\D/g, '');
+  return digits.length === 8 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : null;
+}
+
+export interface AddressParts {
+  address: string | null;
+  addressNumber: string | null;
+  addressComplement?: string | null;
+  postalCode: string | null;
+  neighborhood: string | null;
+  city: string;
+  state: string;
+}
+
+/**
+ * Endereço no formato postal brasileiro:
+ * "Rua Quirino Zagonel, 1206 - Itália, São José dos Pinhais - PR, 83020-304".
+ *
+ * É essa string (e não a nossa coordenada) que vai pro Google Maps: o
+ * geocodificador do Google tem cobertura de número de porta muito melhor que a
+ * do OpenStreetMap no Brasil, então deixar o Google resolver o texto acerta o
+ * ponto com muito mais frequência do que mandar um lat/lng aproximado nosso.
+ */
+export function formatFullAddress(s: AddressParts, opts: { forQuery?: boolean } = {}): string {
+  const { forQuery = false } = opts;
+  const street = s.address?.trim();
+  // "s/n" comunica bem pra quem lê, mas não ajuda geocodificador nenhum a achar
+  // o ponto — então some da string usada como consulta.
+  const streetPart = street
+    ? s.addressNumber
+      ? `${street}, ${s.addressNumber}`
+      : forQuery
+        ? street
+        : `${street}, s/n`
+    : null;
+  const cep = formatCep(s.postalCode);
+
+  const head = [streetPart, s.neighborhood?.trim() || null].filter(Boolean).join(' - ');
+  const tail = [`${s.city} - ${s.state}`, cep].filter(Boolean).join(', ');
+  return [head, tail].filter(Boolean).join(', ');
+}
+
+/** Link de busca do Google Maps a partir do endereço em texto. */
+export function googleMapsUrl(s: AddressParts): string | null {
+  if (!s.address && !s.postalCode) return null;
+  const query = formatFullAddress(s, { forQuery: true });
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
 /**

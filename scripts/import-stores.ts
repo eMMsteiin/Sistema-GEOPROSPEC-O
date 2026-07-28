@@ -1,4 +1,4 @@
-// Importa lojas de cosméticos (CNAE 4772-5/00) das 4 cidades do MVP a partir dos
+// Importa lojas de cosméticos (CNAE 4772-5/00) das cidades cobertas a partir dos
 // Dados Abertos de CNPJ da Receita Federal, geocodifica via Nominatim e grava em Store.
 //
 // Desenhado pra rodar numa máquina com pouco disco livre (~15GB): processa UMA parte
@@ -21,6 +21,7 @@
 //   npx tsx scripts/import-stores.ts --max-parts 1    # smoke test: só a 1ª parte de cada arquivo
 //   npx tsx scripts/import-stores.ts --limit 5        # processa (geocodifica/grava) no máx. 5 lojas
 //   npx tsx scripts/import-stores.ts --period 2026-06 # usa uma pasta mensal específica
+//   npx tsx scripts/import-stores.ts --regeocode      # força regeocodificar tudo
 
 import { PrismaClient } from '@prisma/client';
 import { execFile } from 'node:child_process';
@@ -38,9 +39,13 @@ import {
   WAREHOUSE,
   classifyEstablishmentKind,
   classifyStoreType,
+  formatFullAddress,
   haversineKm,
+  normalizeHouseNumber,
   normalizeName,
 } from '../src/lib/pdv';
+import type { GeocodePrecision } from '@prisma/client';
+import { geocodeAddress } from '../src/lib/geocode';
 
 const execFileAsync = promisify(execFile);
 const prisma = new PrismaClient();
@@ -50,7 +55,6 @@ const WEBDAV_BASE = 'https://arquivos.receitafederal.gov.br/public.php/webdav/Da
 const AUTH_HEADER = `Basic ${Buffer.from(`${SHARE_TOKEN}:`).toString('base64')}`;
 const USER_AGENT = 'mapa-pdvs-vitiss-import/1.0 (stein100706@gmail.com)';
 const WORK_DIR = path.join(os.tmpdir(), 'cnpj-import-pdv');
-const NOMINATIM_DELAY_MS = 1100; // política de uso do Nominatim: máx. 1 req/s
 
 const COL = {
   CNPJ_BASICO: 0,
@@ -62,6 +66,7 @@ const COL = {
   TIPO_LOGRADOURO: 13,
   LOGRADOURO: 14,
   NUMERO: 15,
+  COMPLEMENTO: 16,
   BAIRRO: 17,
   CEP: 18,
   UF: 19,
@@ -75,6 +80,7 @@ interface CliOptions {
   limit: number | null;
   maxParts: number | null;
   period: string | null;
+  regeocode: boolean;
 }
 
 interface EstabRow {
@@ -82,18 +88,21 @@ interface EstabRow {
   cnpjBasico: string;
   nomeFantasia: string | null;
   active: boolean;
-  address: string | null;
+  address: string | null; // logradouro só, sem número
+  addressNumber: string | null;
+  addressComplement: string | null;
   neighborhood: string | null;
-  cep: string | null;
+  cep: string | null; // 8 dígitos sem máscara
   city: string;
   phone: string | null;
 }
 
 function parseArgs(argv: string[]): CliOptions {
-  const opts: CliOptions = { dryRun: false, limit: null, maxParts: null, period: null };
+  const opts: CliOptions = { dryRun: false, limit: null, maxParts: null, period: null, regeocode: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--dry-run') opts.dryRun = true;
+    else if (arg === '--regeocode') opts.regeocode = true;
     else if (arg === '--limit') opts.limit = Number.parseInt(argv[++i], 10);
     else if (arg === '--max-parts') opts.maxParts = Number.parseInt(argv[++i], 10);
     else if (arg === '--period') opts.period = argv[++i];
@@ -197,10 +206,18 @@ async function scanCsvFile(filePath: string, onRow: (cols: string[]) => void): P
   return count;
 }
 
+// Preposições/artigos que ficam em minúscula no meio de nome próprio em
+// português ("Rua Professor Thales de Souza e Silva", não "De Souza E Silva").
+const LOWERCASE_WORDS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'a', 'o', 'as', 'os']);
+
 function titleCase(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/(^|[\s(/-])([a-zà-ÿ])/g, (_, sep: string, ch: string) => sep + ch.toUpperCase());
+  const lowered = s.toLowerCase();
+  let first = true;
+  return lowered.replace(/[\p{L}\p{N}][\p{L}\p{N}']*/gu, (word) => {
+    const keepLower = !first && LOWERCASE_WORDS.has(word);
+    first = false;
+    return keepLower ? word : word.charAt(0).toUpperCase() + word.slice(1);
+  });
 }
 
 async function resolveMunicipalityCodes(period: string): Promise<Map<string, string>> {
@@ -256,21 +273,24 @@ async function scanEstabelecimentos(
 
         const cnpj = `${cols[COL.CNPJ_BASICO]}${cols[COL.CNPJ_ORDEM]}${cols[COL.CNPJ_DV]}`;
         const logradouro = [cols[COL.TIPO_LOGRADOURO], cols[COL.LOGRADOURO]].filter(Boolean).join(' ').trim();
-        const numero = cols[COL.NUMERO]?.trim();
-        const address = logradouro
-          ? titleCase(numero && numero !== 'S/N' ? `${logradouro}, ${numero}` : logradouro)
-          : null;
+        const complemento = cols[COL.COMPLEMENTO]?.trim();
         const ddd = cols[COL.DDD1]?.trim();
         const tel = cols[COL.TELEFONE1]?.trim();
+        const cepDigits = (cols[COL.CEP] ?? '').replace(/\D/g, '');
 
         rows.push({
           cnpj,
           cnpjBasico: cols[COL.CNPJ_BASICO],
           nomeFantasia: cols[COL.NOME_FANTASIA]?.trim() ? titleCase(cols[COL.NOME_FANTASIA].trim()) : null,
           active: cols[COL.SITUACAO] === '02',
-          address,
+          // Logradouro e número ficam separados: o número precisa ir na frente
+          // do nome da rua na consulta ao Nominatim (ver geocode()), e o
+          // endereço postal se remonta na hora de exibir/mandar pro Maps.
+          address: logradouro ? titleCase(logradouro) : null,
+          addressNumber: normalizeHouseNumber(cols[COL.NUMERO]),
+          addressComplement: complemento ? titleCase(complemento) : null,
           neighborhood: cols[COL.BAIRRO]?.trim() ? titleCase(cols[COL.BAIRRO].trim()) : null,
-          cep: cols[COL.CEP]?.trim() || null,
+          cep: cepDigits.length === 8 ? cepDigits : null,
           city,
           phone: ddd && tel ? `(${ddd}) ${tel}` : null,
         });
@@ -314,44 +334,6 @@ async function scanEmpresas(
   return razaoByBasico;
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-let lastNominatimCall = 0;
-
-async function nominatimSearch(params: Record<string, string>): Promise<{ lat: number; lng: number } | null> {
-  const wait = lastNominatimCall + NOMINATIM_DELAY_MS - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastNominatimCall = Date.now();
-
-  const qs = new URLSearchParams({ format: 'jsonv2', limit: '1', countrycodes: 'br', ...params });
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?${qs}`, {
-    headers: { 'User-Agent': USER_AGENT },
-  });
-  if (!res.ok) {
-    console.warn(`  Nominatim respondeu ${res.status} — pulando geocodificação desta loja`);
-    return null;
-  }
-  const results = (await res.json()) as Array<{ lat: string; lon: string }>;
-  if (!results.length) return null;
-  return { lat: Number.parseFloat(results[0].lat), lng: Number.parseFloat(results[0].lon) };
-}
-
-async function geocode(row: EstabRow): Promise<{ lat: number; lng: number } | null> {
-  if (row.address) {
-    const hit = await nominatimSearch({ street: row.address, city: row.city, state: 'Paraná', country: 'Brasil' });
-    if (hit) return hit;
-  }
-  if (row.cep) {
-    const hit = await nominatimSearch({ postalcode: row.cep, country: 'Brasil' });
-    if (hit) return hit;
-  }
-  if (row.neighborhood) {
-    const hit = await nominatimSearch({ q: `${row.neighborhood}, ${row.city}, Paraná, Brasil` });
-    if (hit) return hit;
-  }
-  return null;
-}
-
 async function upsertStores(rows: EstabRow[], razaoByBasico: Map<string, string>, opts: CliOptions) {
   let created = 0;
   let updated = 0;
@@ -376,14 +358,22 @@ async function upsertStores(rows: EstabRow[], razaoByBasico: Map<string, string>
 
     let lat = existing?.lat ?? null;
     let lng = existing?.lng ?? null;
-    const addressChanged = existing ? existing.address !== row.address : true;
-    if (row.active && (lat == null || lng == null || addressChanged)) {
-      const hit = await geocode(row);
+    let precision: GeocodePrecision = existing?.geocodePrecision ?? 'NONE';
+    const addressChanged = existing
+      ? existing.address !== row.address || existing.addressNumber !== row.addressNumber
+      : true;
+    // Regeocodifica também quando o registro antigo não tem precisão gravada
+    // (dado de antes deste campo existir) ou quando ficou só no nível do bairro.
+    const needsBetterFix = precision === 'NONE' || precision === 'NEIGHBORHOOD';
+    if (row.active && (lat == null || lng == null || addressChanged || needsBetterFix || opts.regeocode)) {
+      const hit = await geocodeAddress({ ...row, postalCode: row.cep });
       if (hit) {
         lat = hit.lat;
         lng = hit.lng;
+        precision = hit.precision;
         geocoded++;
       } else {
+        precision = 'NONE';
         console.warn(`  Sem geocodificação pra ${name} (${row.address ?? 'sem endereço'}, ${row.city}) — fica sem pin no mapa`);
       }
     }
@@ -398,26 +388,34 @@ async function upsertStores(rows: EstabRow[], razaoByBasico: Map<string, string>
     if (opts.dryRun) {
       const action = existing ? 'atualizaria' : 'criaria';
       console.log(
-        `[dry-run] ${action}: ${name} | ${row.cnpj} | ${row.address ?? '—'}, ${row.neighborhood ?? '—'}, ${row.city}` +
-          ` | tipo=${autoType} | kind=${autoKind} | ativa=${row.active} | lat/lng=${lat?.toFixed(5) ?? '—'},${lng?.toFixed(5) ?? '—'} | dist=${distanceKm ?? '—'}km`,
+        `[dry-run] ${action}: ${name} | ${row.cnpj} | ${formatFullAddress({ ...row, postalCode: row.cep, state: 'PR' })}` +
+          ` | tipo=${autoType} | kind=${autoKind} | ativa=${row.active} | lat/lng=${lat?.toFixed(5) ?? '—'},${lng?.toFixed(5) ?? '—'} | precisão=${precision} | dist=${distanceKm ?? '—'}km`,
       );
       continue;
     }
+
+    const fresh = {
+      name,
+      address: row.address,
+      addressNumber: row.addressNumber,
+      addressComplement: row.addressComplement,
+      postalCode: row.cep,
+      neighborhood: row.neighborhood,
+      city: row.city,
+      state: 'PR',
+      phone: row.phone,
+      cnaeActive: row.active,
+      lat,
+      lng,
+      geocodePrecision: precision,
+      distanceKm,
+    };
 
     if (existing) {
       await prisma.store.update({
         where: { cnpj: row.cnpj },
         data: {
-          name,
-          address: row.address,
-          neighborhood: row.neighborhood,
-          city: row.city,
-          state: 'PR',
-          phone: row.phone,
-          cnaeActive: row.active,
-          lat,
-          lng,
-          distanceKm,
+          ...fresh,
           ...(existing.storeTypeAuto ? { storeType: autoType } : {}),
           ...(existing.establishmentKindAuto ? { establishmentKind: autoKind } : {}),
         },
@@ -427,16 +425,7 @@ async function upsertStores(rows: EstabRow[], razaoByBasico: Map<string, string>
       await prisma.store.create({
         data: {
           cnpj: row.cnpj,
-          name,
-          address: row.address,
-          neighborhood: row.neighborhood,
-          city: row.city,
-          state: 'PR',
-          phone: row.phone,
-          cnaeActive: row.active,
-          lat,
-          lng,
-          distanceKm,
+          ...fresh,
           storeType: autoType,
           storeTypeAuto: true,
           establishmentKind: autoKind,
@@ -473,7 +462,7 @@ async function main() {
     if (estabParts.length === 0) throw new Error('Nenhuma parte de Estabelecimentos encontrada');
 
     const rows = await scanEstabelecimentos(period, estabParts, codeToCity);
-    console.log(`\nTotal filtrado: ${rows.length} estabelecimentos (CNAE ${CNAE_COSMETICOS}, 4 cidades do MVP)`);
+    console.log(`\nTotal filtrado: ${rows.length} estabelecimentos (CNAE ${CNAE_COSMETICOS}, ${MVP_CITIES.length} cidades)`);
     if (rows.length === 0) {
       console.log('Nada a importar.');
       return;

@@ -10,7 +10,8 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
-import type { EstablishmentKind, ProspectStatus, StoreType } from '@prisma/client';
+import type { EstablishmentKind, GeocodePrecision, ProspectStatus, StoreType } from '@prisma/client';
+import { formatFullAddress, googleMapsUrl } from '@/lib/pdv';
 
 const StoreMap = dynamic(() => import('./store-map'), {
   ssr: false,
@@ -26,11 +27,15 @@ export interface StoreWithIncome {
   cnpj: string;
   name: string;
   address: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  postalCode: string | null;
   neighborhood: string | null;
   city: string;
   state: string;
   lat: number | null;
   lng: number | null;
+  geocodePrecision: GeocodePrecision;
   distanceKm: number | null;
   storeType: StoreType;
   storeTypeAuto: boolean;
@@ -68,17 +73,19 @@ function waLink(phone: string): string {
   return `https://wa.me/55${digits}`;
 }
 
-/** Link do Google Maps — usa coordenadas geocodificadas quando existem, senão o endereço em texto. */
-function mapsLink(store: StoreWithIncome): string | null {
-  if (store.lat != null && store.lng != null) {
-    return `https://www.google.com/maps/search/?api=1&query=${store.lat},${store.lng}`;
-  }
-  if (store.address) {
-    const q = [store.address, store.neighborhood, store.city, store.state].filter(Boolean).join(', ');
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
-  }
-  return null;
-}
+/**
+ * Quão confiável é o pino no nosso mapa. O OpenStreetMap tem cobertura fraca de
+ * número de porta em rua residencial brasileira, então na maior parte das vezes
+ * o melhor que se consegue é o nível da rua — melhor dizer isso do que deixar o
+ * representante achar que o pino está na porta da loja.
+ */
+const PRECISION_NOTE: Record<GeocodePrecision, string | null> = {
+  EXACT: null,
+  STREET: 'Pino aproximado: rua certa, número aproximado.',
+  POSTAL: 'Pino aproximado: centro do CEP.',
+  NEIGHBORHOOD: 'Pino bem aproximado: centro do bairro.',
+  NONE: 'Sem localização — não foi possível posicionar no mapa.',
+};
 
 const TIER_DOT_COLOR: Record<number, string> = {
   1: 'var(--glow)',
@@ -149,10 +156,11 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // O componente é remontado a cada troca de região (key={city} no HomeShell),
+  // então não precisa limpar o estado aqui — limpar dentro do efeito só
+  // dispararia uma renderização em cascata.
   useEffect(() => {
     let cancelled = false;
-    setStores(null);
-    setError(null);
     fetch(`/api/stores?city=${encodeURIComponent(city)}`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`Erro ${res.status}`);
@@ -211,6 +219,25 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
     setNotesDraft(store.notes ?? '');
     setRepDraft(store.visitedByRep ?? '');
     setSaveError(null);
+  };
+
+  /**
+   * Mensagem pronta pra mandar pro representante que vai visitar a loja.
+   * Vai como link de compartilhamento do WhatsApp (wa.me sem número abre a
+   * lista de contatos) em vez de área de transferência: copiar falha calado em
+   * webview de celular, e o link funciona em qualquer aparelho.
+   */
+  const shareUrl = (store: StoreWithIncome) => {
+    const text = [
+      store.name,
+      formatFullAddress(store),
+      store.addressComplement ? `Complemento: ${store.addressComplement}` : null,
+      store.phone ? `Telefone da loja: ${store.phone}` : null,
+      googleMapsUrl(store),
+    ]
+      .filter(Boolean)
+      .join('\n');
+    return `https://wa.me/?text=${encodeURIComponent(text)}`;
   };
 
   const closePanel = () => {
@@ -503,19 +530,37 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
               <div>
                 <dt className="hud-label text-gold-dim">Endereço</dt>
                 <dd className="text-ink">
-                  {selected.address ?? 'Sem endereço'}
-                  {selected.neighborhood ? ` — ${selected.neighborhood}` : ''}, {selected.city}/{selected.state}
+                  {selected.address ? formatFullAddress(selected) : 'Sem endereço'}
                 </dd>
-                {selected.establishmentKind === 'PHYSICAL_STORE' && mapsLink(selected) && (
+                {selected.addressComplement && (
+                  <dd className="text-[12px] text-ink-dim">Complemento: {selected.addressComplement}</dd>
+                )}
+                {PRECISION_NOTE[selected.geocodePrecision] && (
+                  <p className="mt-1 text-[11px] leading-snug text-ink-dim">
+                    {PRECISION_NOTE[selected.geocodePrecision]}
+                  </p>
+                )}
+                <div className="mt-1.5 flex flex-wrap items-center gap-3">
+                  {googleMapsUrl(selected) && (
+                    <a
+                      href={googleMapsUrl(selected) as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] text-gold hover:underline"
+                    >
+                      Abrir no Google Maps →
+                    </a>
+                  )}
                   <a
-                    href={mapsLink(selected) as string}
+                    href={shareUrl(selected)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="mt-1 inline-block text-[11px] text-gold hover:underline"
+                    className="text-[11px] text-gold-dim transition-colors hover:text-gold"
+                    title="Abre o WhatsApp com o endereço pronto pra enviar"
                   >
-                    Abrir no Google Maps →
+                    Enviar pro representante →
                   </a>
-                )}
+                </div>
               </div>
               <div>
                 <dt className="hud-label text-gold-dim">Distância do armazém</dt>

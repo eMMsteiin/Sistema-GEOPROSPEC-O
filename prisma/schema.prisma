@@ -34,16 +34,32 @@ enum EstablishmentKind {
   INDIVIDUAL_RESELLER
 }
 
+/// Quão confiável é a coordenada gravada. O Nominatim (OpenStreetMap) tem
+/// cobertura fraca de número de porta em rua residencial brasileira, então o
+/// pino costuma ser aproximado — a UI precisa dizer isso em vez de fingir
+/// precisão que não existe.
+enum GeocodePrecision {
+  EXACT // número de porta bateu
+  STREET // rua certa, número aproximado
+  POSTAL // centro do CEP
+  NEIGHBORHOOD // centro do bairro
+  NONE // não geocodificou
+}
+
 model Store {
   id                    String            @id @default(cuid())
   cnpj                  String            @unique
   name                  String
-  address               String?
+  address               String? // logradouro só (ex.: "Rua Quirino Zagonel")
+  addressNumber         String? // número de porta; null = sem número (s/n)
+  addressComplement     String? // ex.: "SALA 2", "LOJA 3"
+  postalCode            String? // CEP, 8 dígitos sem máscara — chave mais confiável de endereço no Brasil
   neighborhood          String?
   city                  String
   state                 String            @default("PR")
   lat                   Float?
   lng                   Float?
+  geocodePrecision      GeocodePrecision  @default(NONE)
   distanceKm            Float?
   storeType             StoreType         @default(MULTIBRAND)
   storeTypeAuto         Boolean           @default(true) // false = corrigido manualmente, import não sobrescreve mais

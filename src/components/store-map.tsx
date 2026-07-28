@@ -33,6 +33,10 @@ const MASK_OUTER: [number, number][] = [
 function pinIcon(store: StoreWithIncome, selected: boolean): L.DivIcon {
   const color = TIER_COLORS[store.tier] ?? TIER_COLORS[3];
   const dimmed = store.establishmentKind === 'INDIVIDUAL_RESELLER' && !selected;
+  // Localização só aproximada (centro de CEP/bairro) → contorno tracejado, pra
+  // não passar a impressão de que o pino está na porta da loja.
+  const approximate =
+    store.geocodePrecision === 'POSTAL' || store.geocodePrecision === 'NEIGHBORHOOD';
   const starBadge =
     store.storeType === 'OWN_BRAND'
       ? `<g transform="translate(20,2)">
@@ -49,7 +53,8 @@ function pinIcon(store: StoreWithIncome, selected: boolean): L.DivIcon {
          style="opacity:${dimmed ? 0.5 : 1};filter:drop-shadow(0 0 6px ${color}${Math.round(glow * 255).toString(16).padStart(2, '0')})">
       ${ring}
       <path d="M16 2C8.8 2 3 7.8 3 15c0 9.6 13 27 13 27s13-17.4 13-27C29 7.8 23.2 2 16 2z"
-            fill="${color}" stroke="#0b0708" stroke-width="1.6"/>
+            fill="${approximate ? 'none' : color}" stroke="${approximate ? color : '#0b0708'}"
+            stroke-width="${approximate ? 2.2 : 1.6}"${approximate ? ' stroke-dasharray="4 3"' : ''}/>
       <circle cx="16" cy="15" r="5" fill="#0b0708"/>
       <circle cx="16" cy="15" r="2.4" fill="${color}"/>
       ${starBadge}

@@ -2,9 +2,12 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { cityTier, normalizeName } from '@/lib/pdv';
-import type { Prisma, ProspectStatus } from '@prisma/client';
+import { ProspectStatus } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
-const PROSPECT_STATUSES: ProspectStatus[] = ['NOT_VISITED', 'VISITED', 'PARTNER', 'DECLINED'];
+// Derivado do enum do Prisma — não repetir os valores à mão, senão a lista
+// desatualiza sem ninguém perceber quando um status novo entra no schema.
+const PROSPECT_STATUSES = Object.values(ProspectStatus);
 
 export async function GET(req: Request) {
   const session = await getSession();

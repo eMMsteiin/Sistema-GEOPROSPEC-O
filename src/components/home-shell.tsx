@@ -33,7 +33,7 @@ export default function HomeShell({ userName }: { userName: string }) {
       {city === null ? (
         <CitySelector onSelect={setCity} />
       ) : (
-        <StoreMapView city={city} onBack={() => setCity(null)} />
+        <StoreMapView key={city} city={city} onBack={() => setCity(null)} />
       )}
     </div>
   );
