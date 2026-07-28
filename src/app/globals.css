@@ -1,26 +1,177 @@
 @import "tailwindcss";
 
+/*
+ * Tema holográfico (direção visual aprovada no protótipo): fundo quase-preto
+ * com vinheta vermelha, vermelhos da marca + bege/dourado como segunda cor.
+ * Tema único por design — uma interface "holográfica" não tem versão clara.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --void: #0b0708;
+  --void-2: #170b0d;
+  --red-deep: #4a0a17;
+  --red-mid: #7d1428;
+  --glow: #dd3c56;
+  --gold: #d4b483;
+  --gold-dim: #8a7355;
+  --ink: #f3e8db;
+  --ink-dim: #a89887;
+  --panel-border: rgba(212, 180, 131, 0.16);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-void: var(--void);
+  --color-void-2: var(--void-2);
+  --color-red-deep: var(--red-deep);
+  --color-red-mid: var(--red-mid);
+  --color-glow: var(--glow);
+  --color-gold: var(--gold);
+  --color-gold-dim: var(--gold-dim);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--void);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--void);
+  background-image:
+    radial-gradient(ellipse 120% 70% at 50% -10%, rgba(125, 20, 40, 0.28), transparent 55%),
+    radial-gradient(ellipse 90% 60% at 85% 100%, rgba(212, 180, 131, 0.07), transparent 60%),
+    linear-gradient(180deg, var(--void) 0%, var(--void-2) 100%);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-geist-sans), sans-serif;
+  min-height: 100vh;
+}
+
+/* Scanlines estáticas — textura do "holograma", sem movimento. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(243, 232, 219, 0.02) 0px,
+    rgba(243, 232, 219, 0.02) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  z-index: 40;
+  mix-blend-mode: overlay;
+}
+
+/* Painel de vidro padrão */
+.holo-panel {
+  background: rgba(40, 17, 21, 0.45);
+  border: 1px solid var(--panel-border);
+}
+
+/* Cantos técnicos (canto superior-esquerdo + inferior-direito).
+   Não define position aqui — cada uso escolhe (relative/fixed) via utilitário,
+   senão esta regra sem @layer venceria o `fixed` do Tailwind no cascade. */
+.holo-corners::before,
+.holo-corners::after {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--gold-dim);
+  pointer-events: none;
+  z-index: 5;
+}
+.holo-corners::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+.holo-corners::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+/* Rótulo HUD (eyebrow monoespaçado) */
+.hud-label {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* Inputs no tema */
+.holo-input {
+  background: rgba(11, 7, 8, 0.6);
+  border: 1px solid var(--panel-border);
+  color: var(--ink);
+  border-radius: 2px;
+}
+.holo-input:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px rgba(212, 180, 131, 0.35);
+}
+.holo-input::placeholder {
+  color: var(--ink-dim);
+  opacity: 0.6;
+}
+.holo-input option {
+  background: var(--void-2);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+@keyframes holo-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.holo-pulse {
+  animation: holo-pulse 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .holo-pulse { animation: none; }
+}
+
+/*
+ * Leaflet — tratamento escuro dos tiles OSM: inverte e dessatura pra virar um
+ * mapa escuro de baixo ruído, mantendo as ruas legíveis. Aplica só no pane de
+ * tiles (pins/controles ficam intactos).
+ */
+.holo-map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.72) contrast(1.06) saturate(0.28);
+}
+.holo-map.leaflet-container {
+  background: var(--void-2);
+  font-family: var(--font-geist-sans), sans-serif;
+}
+.holo-map .leaflet-control-attribution {
+  background: rgba(11, 7, 8, 0.7);
+  color: var(--ink-dim);
+  font-size: 10px;
+}
+.holo-map .leaflet-control-attribution a {
+  color: var(--gold-dim);
+}
+.holo-map .leaflet-control-zoom a {
+  background: rgba(23, 11, 13, 0.9);
+  color: var(--ink);
+  border-color: var(--panel-border);
+}
+.holo-map .leaflet-control-zoom a:hover {
+  background: rgba(74, 10, 23, 0.9);
+  color: var(--gold);
+}
+.holo-map .leaflet-bar {
+  border: 1px solid var(--panel-border);
+  box-shadow: none;
 }

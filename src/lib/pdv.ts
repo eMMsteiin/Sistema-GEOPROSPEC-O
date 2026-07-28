@@ -5,8 +5,8 @@
 /** CNAE de comércio varejista de cosméticos, perfumaria e higiene pessoal (4772-5/00). */
 export const CNAE_COSMETICOS = '4772500';
 
-/** Cidades do MVP (tier 1) — nomes canônicos, como gravados em Store.city / RegionIncome.city. */
-export const MVP_CITIES = ['São José dos Pinhais', 'Piraquara', 'Colombo', 'Pinhais'] as const;
+/** Cidades cobertas — nomes canônicos, como gravados em Store.city / RegionIncome.city. */
+export const MVP_CITIES = ['São José dos Pinhais', 'Piraquara', 'Colombo', 'Pinhais', 'Curitiba'] as const;
 
 /** Códigos IBGE de município (7 dígitos) — verificados na API de localidades do IBGE. */
 export const IBGE_CODE_BY_CITY: Record<string, string> = {
@@ -14,6 +14,7 @@ export const IBGE_CODE_BY_CITY: Record<string, string> = {
   'Piraquara': '4119509',
   'Colombo': '4105805',
   'Pinhais': '4119152',
+  'Curitiba': '4106902',
 };
 
 /**

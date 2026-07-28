@@ -1,7 +1,8 @@
 'use client';
 
 // Mapa Leaflet — carregado só no cliente (dynamic import com ssr: false no
-// store-map-view, já que o Leaflet acessa `window`).
+// store-map-view, já que o Leaflet acessa `window`). Os tiles OSM recebem o
+// tratamento escuro via CSS (classe .holo-map em globals.css).
 
 import { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
@@ -10,10 +11,11 @@ import 'leaflet/dist/leaflet.css';
 import { WAREHOUSE } from '@/lib/pdv';
 import type { StoreWithIncome } from './store-map-view';
 
+// Paleta holográfica: tier 1 = brilho vermelho, tier 2 = dourado, tier 3 = dourado apagado.
 const TIER_COLORS: Record<number, string> = {
-  1: '#16a34a', // prioridade alta
-  2: '#d97706', // prioridade média
-  3: '#6b7280', // prioridade baixa
+  1: '#dd3c56',
+  2: '#d4b483',
+  3: '#8a7355',
 };
 
 function pinIcon(store: StoreWithIncome, selected: boolean): L.DivIcon {
@@ -22,19 +24,22 @@ function pinIcon(store: StoreWithIncome, selected: boolean): L.DivIcon {
   const starBadge =
     store.storeType === 'OWN_BRAND'
       ? `<g transform="translate(20,2)">
-           <circle cx="7" cy="7" r="7" fill="#7c3aed" stroke="white" stroke-width="1.5"/>
-           <path d="M7 2.8l1.2 2.5 2.7.4-2 1.9.5 2.7L7 9l-2.4 1.3.5-2.7-2-1.9 2.7-.4z" fill="white"/>
+           <circle cx="7" cy="7" r="7" fill="#7c3aed" stroke="#f3e8db" stroke-width="1.2"/>
+           <path d="M7 2.8l1.2 2.5 2.7.4-2 1.9.5 2.7L7 9l-2.4 1.3.5-2.7-2-1.9 2.7-.4z" fill="#f3e8db"/>
          </g>`
       : '';
   const ring = selected
-    ? `<circle cx="16" cy="16" r="14" fill="none" stroke="${color}" stroke-width="2" stroke-opacity="0.45"/>`
+    ? `<circle cx="16" cy="16" r="14" fill="none" stroke="${color}" stroke-width="2" stroke-opacity="0.5"/>`
     : '';
+  const glow = selected || store.tier === 1 ? 0.55 : 0.3;
   const html = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="36" height="44" viewBox="0 0 36 44" style="opacity:${dimmed ? 0.55 : 1}">
+    <svg xmlns="http://www.w3.org/2000/svg" width="36" height="44" viewBox="0 0 36 44"
+         style="opacity:${dimmed ? 0.5 : 1};filter:drop-shadow(0 0 6px ${color}${Math.round(glow * 255).toString(16).padStart(2, '0')})">
       ${ring}
       <path d="M16 2C8.8 2 3 7.8 3 15c0 9.6 13 27 13 27s13-17.4 13-27C29 7.8 23.2 2 16 2z"
-            fill="${color}" stroke="white" stroke-width="2"/>
-      <circle cx="16" cy="15" r="5" fill="white"/>
+            fill="${color}" stroke="#0b0708" stroke-width="1.6"/>
+      <circle cx="16" cy="15" r="5" fill="#0b0708"/>
+      <circle cx="16" cy="15" r="2.4" fill="${color}"/>
       ${starBadge}
     </svg>`;
   return L.divIcon({
@@ -48,9 +53,10 @@ function pinIcon(store: StoreWithIncome, selected: boolean): L.DivIcon {
 const warehouseIcon = L.divIcon({
   className: '',
   html: `
-    <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
-      <circle cx="15" cy="15" r="12" fill="#2563eb" stroke="white" stroke-width="3"/>
-      <path d="M9 16.5l6-5 6 5V21H9z" fill="white"/>
+    <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30"
+         style="filter:drop-shadow(0 0 8px rgba(212,180,131,0.7))">
+      <circle cx="15" cy="15" r="12" fill="#d4b483" stroke="#0b0708" stroke-width="2"/>
+      <path d="M9 16.5l6-5 6 5V21H9z" fill="#0b0708"/>
     </svg>`,
   iconSize: [30, 30],
   iconAnchor: [15, 15],
@@ -86,7 +92,7 @@ export default function StoreMap({ stores, selectedId, onSelect }: StoreMapProps
       center={[WAREHOUSE.lat, WAREHOUSE.lng]}
       zoom={11}
       scrollWheelZoom
-      className="h-full w-full"
+      className="holo-map h-full w-full"
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

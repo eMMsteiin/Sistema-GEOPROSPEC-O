@@ -7,10 +7,11 @@ export default async function LoginPage() {
   if (session) redirect('/');
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-semibold text-gray-900">Mapa de PDVs</h1>
-        <p className="mb-6 mt-1 text-sm text-gray-500">Prospecção de lojas de cosméticos</p>
+    <main className="flex min-h-screen items-center justify-center p-4">
+      <div className="holo-panel holo-corners relative w-full max-w-sm rounded-sm p-6">
+        <p className="hud-label text-gold">Sistema de Geoprospecção</p>
+        <h1 className="mt-1 text-xl font-bold text-ink">Vitiss Cosméticos — Melhorança</h1>
+        <p className="mt-1 mb-6 text-sm text-ink-dim">Prospecção de lojas de cosméticos · RM Curitiba</p>
         <LoginForm />
       </div>
     </main>

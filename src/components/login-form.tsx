@@ -37,32 +37,33 @@ export default function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <label className="block">
-        <span className="mb-1 block text-sm font-medium text-gray-700">E-mail</span>
+        <span className="hud-label mb-1.5 block text-gold-dim">E-mail</span>
         <input
           type="email"
           required
           autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none"
+          className="holo-input w-full rounded-sm px-3 py-2 text-sm"
         />
       </label>
       <label className="block">
-        <span className="mb-1 block text-sm font-medium text-gray-700">Senha</span>
+        <span className="hud-label mb-1.5 block text-gold-dim">Senha</span>
         <input
           type="password"
           required
           autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none"
+          className="holo-input w-full rounded-sm px-3 py-2 text-sm"
         />
       </label>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-[#ff8fa0]">{error}</p>}
       <button
         type="submit"
         disabled={loading}
-        className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        className="w-full rounded-sm bg-red-mid px-3 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-red-deep disabled:opacity-50"
+        style={{ boxShadow: '0 0 12px rgba(221,60,86,0.3)' }}
       >
         {loading ? 'Entrando...' : 'Entrar'}
       </button>
