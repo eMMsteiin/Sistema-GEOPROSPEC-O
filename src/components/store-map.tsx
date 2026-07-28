@@ -74,35 +74,61 @@ const warehouseIcon = L.divIcon({
   iconAnchor: [15, 15],
 });
 
-/** Enquadra o contorno da cidade e limita o pan/zoom a ele. */
+/**
+ * Entrada cinematográfica: começa com a região metropolitana inteira e "voa"
+ * pra dentro do contorno da cidade; só depois trava pan/zoom nos limites dela.
+ * Com prefers-reduced-motion, enquadra direto sem voo.
+ */
 function FitCity({ ring }: { ring: [number, number][] | null }) {
   const map = useMap();
   const fitted = useRef(false);
 
   useEffect(() => {
     if (fitted.current) return;
-    if (ring && ring.length > 2) {
-      const bounds = L.latLngBounds(ring);
-      map.fitBounds(bounds, { padding: [24, 24] });
+    fitted.current = true;
+
+    if (!ring || ring.length < 3) {
+      map.fitBounds(L.latLngBounds([[WAREHOUSE.lat, WAREHOUSE.lng]]), { maxZoom: 12 });
+      return;
+    }
+
+    const bounds = L.latLngBounds(ring);
+    const clamp = () => {
       map.setMaxBounds(bounds.pad(0.25));
       map.setMinZoom(map.getBoundsZoom(bounds.pad(0.25)));
-    } else {
-      map.fitBounds(L.latLngBounds([[WAREHOUSE.lat, WAREHOUSE.lng]]), { maxZoom: 12 });
+    };
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) {
+      map.fitBounds(bounds, { padding: [24, 24] });
+      clamp();
+      return;
     }
-    fitted.current = true;
+
+    map.setView(bounds.getCenter(), Math.max(map.getBoundsZoom(bounds) - 2, 8), { animate: false });
+    map.once('moveend', clamp);
+    map.flyToBounds(bounds, { padding: [24, 24], duration: 1.3, easeLinearity: 0.22 });
   }, [ring, map]);
 
   return null;
 }
 
+// Imagem de satélite (Esri World Imagery) — alternativa gratuita com
+// atribuição; o Google Maps não permite uso dos tiles sem a API paga.
+const SAT_URL =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const SAT_ATTRIBUTION =
+  'Imagens &copy; <a href="https://www.esri.com">Esri</a> — Source: Esri, Maxar, Earthstar Geographics';
+
 interface StoreMapProps {
   city: string;
+  satellite: boolean;
   stores: StoreWithIncome[];
   selectedId: string | null;
   onSelect: (store: StoreWithIncome) => void;
 }
 
-export default function StoreMap({ city, stores, selectedId, onSelect }: StoreMapProps) {
+export default function StoreMap({ city, satellite, stores, selectedId, onSelect }: StoreMapProps) {
   const ring = CITY_GEO_RING[city] ?? null;
 
   return (
@@ -110,12 +136,17 @@ export default function StoreMap({ city, stores, selectedId, onSelect }: StoreMa
       center={[WAREHOUSE.lat, WAREHOUSE.lng]}
       zoom={11}
       scrollWheelZoom
-      className="holo-map h-full w-full"
+      className={`h-full w-full ${satellite ? 'holo-map holo-map--sat' : 'holo-map'}`}
     >
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
+      {satellite ? (
+        <TileLayer key="sat" attribution={SAT_ATTRIBUTION} url={SAT_URL} />
+      ) : (
+        <TileLayer
+          key="osm"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+      )}
       <FitCity ring={ring} />
 
       {/* Máscara: cobre tudo fora do município (o anel da cidade é o furo). */}

@@ -120,6 +120,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
   const [neighborhoodFilter, setNeighborhoodFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [kindFilter, setKindFilter] = useState('');
+  const [satellite, setSatellite] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
@@ -223,7 +224,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 pb-10 sm:px-6">
       {/* Cabeçalho da região */}
-      <div className="mt-5 mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="rise mt-5 mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -258,7 +259,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
       ) : (
         <>
           {/* Filtros */}
-          <div className="mb-3 flex flex-wrap items-end gap-3">
+          <div className="rise mb-3 flex flex-wrap items-end gap-3" style={{ '--d': '90ms' } as React.CSSProperties}>
             <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-wider text-gold-dim">
               Bairro
               <select
@@ -316,12 +317,35 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
           </div>
 
           {/* Mapa */}
-          <div className="holo-panel holo-corners relative h-[45vh] min-h-[280px] w-full overflow-hidden rounded-sm sm:h-[52vh]">
-            <StoreMap key={city} city={city} stores={filtered} selectedId={selectedId} onSelect={openStore} />
+          <div
+            className="holo-panel holo-corners rise relative h-[45vh] min-h-[280px] w-full overflow-hidden rounded-sm sm:h-[52vh]"
+            style={{ '--d': '160ms' } as React.CSSProperties}
+          >
+            <StoreMap
+              key={city}
+              city={city}
+              satellite={satellite}
+              stores={filtered}
+              selectedId={selectedId}
+              onSelect={openStore}
+            />
+            {/* Alternância ruas/satélite — imagem real do lugar (Esri) */}
+            <button
+              type="button"
+              onClick={() => setSatellite((s) => !s)}
+              className="holo-input absolute top-3 right-3 z-[900] rounded-sm px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors"
+              style={{
+                background: 'rgba(11,7,8,0.82)',
+                color: satellite ? 'var(--gold)' : 'var(--ink-dim)',
+                borderColor: satellite ? 'var(--gold)' : 'var(--panel-border)',
+              }}
+            >
+              {satellite ? '◉ Satélite' : '○ Satélite'}
+            </button>
           </div>
 
           {/* Lista */}
-          <div className="mt-4 flex-1">
+          <div className="rise mt-4 flex-1" style={{ '--d': '230ms' } as React.CSSProperties}>
             <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
               {filtered.length === 0
                 ? stores.length === 0
@@ -344,14 +368,14 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((store) => (
+                    {filtered.map((store, i) => (
                       <tr
                         key={store.id}
                         onClick={() => openStore(store)}
-                        className={`cursor-pointer border-b transition-colors last:border-0 hover:bg-glow/10 ${
+                        className={`rise cursor-pointer border-b transition-colors last:border-0 hover:bg-glow/10 ${
                           store.id === selectedId ? 'bg-glow/10' : ''
                         }`}
-                        style={{ borderColor: 'rgba(212,180,131,0.08)' }}
+                        style={{ borderColor: 'rgba(212,180,131,0.08)', '--d': `${260 + Math.min(i, 10) * 45}ms` } as React.CSSProperties}
                       >
                         <td className="px-4 py-3">
                           <span className="flex flex-wrap items-center gap-2">
@@ -382,12 +406,12 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
             {/* Cards (mobile) */}
             {filtered.length > 0 && (
               <ul className="space-y-2 md:hidden">
-                {filtered.map((store) => (
-                  <li key={store.id}>
+                {filtered.map((store, i) => (
+                  <li key={store.id} className="rise" style={{ '--d': `${260 + Math.min(i, 10) * 45}ms` } as React.CSSProperties}>
                     <button
                       type="button"
                       onClick={() => openStore(store)}
-                      className={`holo-panel w-full rounded-sm p-3 text-left ${
+                      className={`holo-panel w-full rounded-sm p-3 text-left transition-transform active:scale-[0.99] ${
                         store.id === selectedId ? 'outline outline-1 outline-glow' : ''
                       }`}
                     >
@@ -416,9 +440,9 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
       {/* Painel de detalhe */}
       {selected && (
         <>
-          <div className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-[2px]" onClick={closePanel} aria-hidden />
+          <div className="backdrop-anim fixed inset-0 z-[1000] bg-black/60 backdrop-blur-[2px]" onClick={closePanel} aria-hidden />
           <div
-            className="holo-corners fixed inset-x-0 bottom-0 z-[1001] max-h-[85vh] overflow-y-auto border-t p-5 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 sm:max-h-none sm:w-[400px] sm:border-t-0 sm:border-l"
+            className="holo-corners drawer-anim fixed inset-x-0 bottom-0 z-[1001] max-h-[85vh] overflow-y-auto border-t p-5 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 sm:max-h-none sm:w-[400px] sm:border-t-0 sm:border-l"
             style={{ background: 'rgba(23,11,13,0.97)', borderColor: 'var(--panel-border)' }}
           >
             <div className="mb-4 flex items-start justify-between gap-3">

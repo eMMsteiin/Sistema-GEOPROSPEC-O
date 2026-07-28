@@ -142,6 +142,77 @@ body::before {
   .holo-pulse { animation: none; }
 }
 
+/* ---------- Animações de interação (fluidas, com reduced-motion) ---------- */
+
+/* Entrada em cascata: aplicar .rise com --d (delay) inline por elemento. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+.rise {
+  opacity: 0;
+  animation: rise-in 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  animation-delay: var(--d, 0ms);
+}
+
+/* Contorno das cidades "desenhando" na entrada do seletor. */
+@keyframes shape-draw {
+  to { stroke-dashoffset: 0; }
+}
+.shape-draw {
+  stroke-dasharray: 3200;
+  stroke-dashoffset: 3200;
+  animation: shape-draw 1.5s ease-out forwards;
+  animation-delay: var(--d, 0ms);
+}
+
+/* Varredura de radar atrás do seletor (do protótipo aprovado). */
+@keyframes radar-sweep {
+  to { transform: rotate(360deg); }
+}
+.radar-sweep {
+  position: absolute;
+  inset: -20%;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 300deg,
+    rgba(221, 60, 86, 0.10) 344deg,
+    rgba(221, 60, 86, 0.22) 358deg,
+    transparent 360deg
+  );
+  animation: radar-sweep 9s linear infinite;
+}
+
+/* Gaveta de detalhe: sobe no mobile, desliza da direita no desktop. */
+@keyframes drawer-up {
+  from { transform: translateY(100%); }
+}
+@keyframes drawer-side {
+  from { transform: translateX(100%); }
+}
+.drawer-anim {
+  animation: drawer-up 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (min-width: 640px) {
+  .drawer-anim { animation-name: drawer-side; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+.backdrop-anim {
+  animation: fade-in 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise { animation: none; opacity: 1; }
+  .shape-draw { animation: none; stroke-dashoffset: 0; }
+  .radar-sweep { animation: none; opacity: 0; }
+  .drawer-anim, .backdrop-anim { animation: none; }
+}
+
 /*
  * Leaflet — tratamento escuro dos tiles OSM: inverte e dessatura pra virar um
  * mapa escuro de baixo ruído, mantendo as ruas legíveis. Aplica só no pane de
@@ -149,6 +220,12 @@ body::before {
  */
 .holo-map .leaflet-tile-pane {
   filter: invert(1) hue-rotate(180deg) brightness(0.72) contrast(1.06) saturate(0.28);
+}
+
+/* Modo satélite: imagem real (Esri World Imagery) — sem inversão, só um leve
+   escurecimento pra sentar no tema. */
+.holo-map--sat .leaflet-tile-pane {
+  filter: brightness(0.82) saturate(0.9) contrast(1.05);
 }
 .holo-map.leaflet-container {
   background: var(--void-2);
