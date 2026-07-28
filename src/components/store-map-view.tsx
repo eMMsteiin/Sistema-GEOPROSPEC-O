@@ -317,7 +317,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
 
           {/* Mapa */}
           <div className="holo-panel holo-corners relative h-[45vh] min-h-[280px] w-full overflow-hidden rounded-sm sm:h-[52vh]">
-            <StoreMap key={city} stores={filtered} selectedId={selectedId} onSelect={openStore} />
+            <StoreMap key={city} city={city} stores={filtered} selectedId={selectedId} onSelect={openStore} />
           </div>
 
           {/* Lista */}

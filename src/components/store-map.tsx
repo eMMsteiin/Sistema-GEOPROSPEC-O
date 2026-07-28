@@ -2,13 +2,16 @@
 
 // Mapa Leaflet — carregado só no cliente (dynamic import com ssr: false no
 // store-map-view, já que o Leaflet acessa `window`). Os tiles OSM recebem o
-// tratamento escuro via CSS (classe .holo-map em globals.css).
+// tratamento escuro via CSS (classe .holo-map em globals.css) e tudo fora do
+// contorno municipal da cidade selecionada é coberto por uma máscara — abrir
+// Colombo mostra só Colombo, não a região inteira.
 
 import { useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polygon, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { WAREHOUSE } from '@/lib/pdv';
+import { CITY_GEO_RING } from '@/lib/city-shapes';
 import type { StoreWithIncome } from './store-map-view';
 
 // Paleta holográfica: tier 1 = brilho vermelho, tier 2 = dourado, tier 3 = dourado apagado.
@@ -17,6 +20,15 @@ const TIER_COLORS: Record<number, string> = {
   2: '#d4b483',
   3: '#8a7355',
 };
+
+// Anel externo da máscara — retângulo bem maior que a região; o contorno da
+// cidade vira o "furo" (Leaflet trata anéis extras de um Polygon como furos).
+const MASK_OUTER: [number, number][] = [
+  [-85, -180],
+  [-85, 180],
+  [85, 180],
+  [85, -180],
+];
 
 function pinIcon(store: StoreWithIncome, selected: boolean): L.DivIcon {
   const color = TIER_COLORS[store.tier] ?? TIER_COLORS[3];
@@ -62,31 +74,37 @@ const warehouseIcon = L.divIcon({
   iconAnchor: [15, 15],
 });
 
-/** Enquadra todas as lojas + o armazém, só no primeiro carregamento. */
-function FitBoundsOnce({ stores }: { stores: StoreWithIncome[] }) {
+/** Enquadra o contorno da cidade e limita o pan/zoom a ele. */
+function FitCity({ ring }: { ring: [number, number][] | null }) {
   const map = useMap();
   const fitted = useRef(false);
 
   useEffect(() => {
     if (fitted.current) return;
-    const points: [number, number][] = stores
-      .filter((s) => s.lat != null && s.lng != null)
-      .map((s) => [s.lat as number, s.lng as number]);
-    points.push([WAREHOUSE.lat, WAREHOUSE.lng]);
-    map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 14 });
+    if (ring && ring.length > 2) {
+      const bounds = L.latLngBounds(ring);
+      map.fitBounds(bounds, { padding: [24, 24] });
+      map.setMaxBounds(bounds.pad(0.25));
+      map.setMinZoom(map.getBoundsZoom(bounds.pad(0.25)));
+    } else {
+      map.fitBounds(L.latLngBounds([[WAREHOUSE.lat, WAREHOUSE.lng]]), { maxZoom: 12 });
+    }
     fitted.current = true;
-  }, [stores, map]);
+  }, [ring, map]);
 
   return null;
 }
 
 interface StoreMapProps {
+  city: string;
   stores: StoreWithIncome[];
   selectedId: string | null;
   onSelect: (store: StoreWithIncome) => void;
 }
 
-export default function StoreMap({ stores, selectedId, onSelect }: StoreMapProps) {
+export default function StoreMap({ city, stores, selectedId, onSelect }: StoreMapProps) {
+  const ring = CITY_GEO_RING[city] ?? null;
+
   return (
     <MapContainer
       center={[WAREHOUSE.lat, WAREHOUSE.lng]}
@@ -98,7 +116,30 @@ export default function StoreMap({ stores, selectedId, onSelect }: StoreMapProps
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <FitBoundsOnce stores={stores} />
+      <FitCity ring={ring} />
+
+      {/* Máscara: cobre tudo fora do município (o anel da cidade é o furo). */}
+      {ring && (
+        <>
+          <Polygon
+            positions={[MASK_OUTER, ring]}
+            pathOptions={{ fillColor: '#0b0708', fillOpacity: 0.94, stroke: false }}
+            interactive={false}
+          />
+          {/* Halo + traço do limite municipal */}
+          <Polygon
+            positions={ring}
+            pathOptions={{ fill: false, color: '#d4b483', weight: 6, opacity: 0.12 }}
+            interactive={false}
+          />
+          <Polygon
+            positions={ring}
+            pathOptions={{ fill: false, color: '#d4b483', weight: 1.5, opacity: 0.7 }}
+            interactive={false}
+          />
+        </>
+      )}
+
       <Marker
         position={[WAREHOUSE.lat, WAREHOUSE.lng]}
         icon={warehouseIcon}
