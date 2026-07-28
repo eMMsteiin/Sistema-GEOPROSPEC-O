@@ -26,6 +26,7 @@ enum ProspectStatus {
   VISITED
   PARTNER
   DECLINED
+  REQUESTED_TO_REPS // solicitada para os representantes visitarem
 }
 
 enum EstablishmentKind {
@@ -51,6 +52,7 @@ model Store {
   status                ProspectStatus    @default(NOT_VISITED)
   phone                 String?
   notes                 String?
+  visitedByRep          String? // nome do representante que visitou a loja
   cnaeActive            Boolean           @default(true) // situação cadastral ativa na Receita
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt

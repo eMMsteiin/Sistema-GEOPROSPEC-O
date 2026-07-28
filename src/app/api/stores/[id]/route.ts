@@ -4,7 +4,13 @@ import { getSession } from '@/lib/session';
 import { cityTier } from '@/lib/pdv';
 import type { EstablishmentKind, Prisma, ProspectStatus, StoreType } from '@prisma/client';
 
-const PROSPECT_STATUSES: ProspectStatus[] = ['NOT_VISITED', 'VISITED', 'PARTNER', 'DECLINED'];
+const PROSPECT_STATUSES: ProspectStatus[] = [
+  'NOT_VISITED',
+  'VISITED',
+  'PARTNER',
+  'DECLINED',
+  'REQUESTED_TO_REPS',
+];
 const STORE_TYPES: StoreType[] = ['MULTIBRAND', 'OWN_BRAND'];
 const ESTABLISHMENT_KINDS: EstablishmentKind[] = ['PHYSICAL_STORE', 'INDIVIDUAL_RESELLER'];
 
@@ -49,6 +55,13 @@ export async function PATCH(
       return NextResponse.json({ error: 'Observações inválidas' }, { status: 400 });
     }
     data.notes = typeof body.notes === 'string' ? body.notes.trim() || null : null;
+  }
+
+  if ('visitedByRep' in body) {
+    if (body.visitedByRep !== null && typeof body.visitedByRep !== 'string') {
+      return NextResponse.json({ error: 'Representante inválido' }, { status: 400 });
+    }
+    data.visitedByRep = typeof body.visitedByRep === 'string' ? body.visitedByRep.trim() || null : null;
   }
 
   if (Object.keys(data).length === 0) {

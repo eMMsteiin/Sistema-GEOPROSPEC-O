@@ -39,6 +39,7 @@ export interface StoreWithIncome {
   status: ProspectStatus;
   phone: string | null;
   notes: string | null;
+  visitedByRep: string | null;
   cnaeActive: boolean;
   avgIncome: number | null;
   incomeSource: string | null;
@@ -50,6 +51,7 @@ const STATUS_LABELS: Record<ProspectStatus, string> = {
   VISITED: 'Visitada',
   PARTNER: 'Parceira',
   DECLINED: 'Recusou',
+  REQUESTED_TO_REPS: 'Solicitada para os representantes',
 };
 
 const STATUS_CHIP: Record<ProspectStatus, string> = {
@@ -57,7 +59,26 @@ const STATUS_CHIP: Record<ProspectStatus, string> = {
   VISITED: 'bg-gold/15 text-gold',
   PARTNER: 'bg-emerald-400/15 text-emerald-300',
   DECLINED: 'bg-glow/15 text-[#ff8fa0]',
+  REQUESTED_TO_REPS: 'bg-sky-400/15 text-sky-300',
 };
+
+/** Telefone cadastrado na Receita → link direto pro WhatsApp (não é validado, pode estar desatualizado). */
+function waLink(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  return `https://wa.me/55${digits}`;
+}
+
+/** Link do Google Maps — usa coordenadas geocodificadas quando existem, senão o endereço em texto. */
+function mapsLink(store: StoreWithIncome): string | null {
+  if (store.lat != null && store.lng != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${store.lat},${store.lng}`;
+  }
+  if (store.address) {
+    const q = [store.address, store.neighborhood, store.city, store.state].filter(Boolean).join(', ');
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+  }
+  return null;
+}
 
 const TIER_DOT_COLOR: Record<number, string> = {
   1: 'var(--glow)',
@@ -124,6 +145,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
+  const [repDraft, setRepDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -187,6 +209,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
   const openStore = (store: StoreWithIncome) => {
     setSelectedId(store.id);
     setNotesDraft(store.notes ?? '');
+    setRepDraft(store.visitedByRep ?? '');
     setSaveError(null);
   };
 
@@ -207,6 +230,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
       if (!res.ok) throw new Error(`Erro ${res.status}`);
       const updated = (await res.json()) as StoreWithIncome;
       if ('notes' in body) setNotesDraft(updated.notes ?? '');
+      if ('visitedByRep' in body) setRepDraft(updated.visitedByRep ?? '');
       setStores((prev) =>
         prev
           ? prev.map((s) =>
@@ -482,6 +506,16 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                   {selected.address ?? 'Sem endereço'}
                   {selected.neighborhood ? ` — ${selected.neighborhood}` : ''}, {selected.city}/{selected.state}
                 </dd>
+                {selected.establishmentKind === 'PHYSICAL_STORE' && mapsLink(selected) && (
+                  <a
+                    href={mapsLink(selected) as string}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-block text-[11px] text-gold hover:underline"
+                  >
+                    Abrir no Google Maps →
+                  </a>
+                )}
               </div>
               <div>
                 <dt className="hud-label text-gold-dim">Distância do armazém</dt>
@@ -490,10 +524,16 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                 </dd>
               </div>
               <div>
-                <dt className="hud-label text-gold-dim">Telefone</dt>
+                <dt className="hud-label text-gold-dim">Telefone (WhatsApp)</dt>
                 <dd>
                   {selected.phone ? (
-                    <a href={`tel:${selected.phone.replace(/\D/g, '')}`} className="text-gold hover:underline">
+                    <a
+                      href={waLink(selected.phone)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-gold hover:underline"
+                      title="Abrir conversa no WhatsApp"
+                    >
                       {selected.phone}
                     </a>
                   ) : (
@@ -525,6 +565,29 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                   ))}
                 </select>
               </label>
+
+              <label className="block">
+                <span className="hud-label mb-1.5 block text-gold-dim">Representante que visitou</span>
+                <input
+                  type="text"
+                  className={`${selectClass} w-full`}
+                  value={repDraft}
+                  disabled={saving}
+                  onChange={(e) => setRepDraft(e.target.value)}
+                  placeholder="Nome do representante"
+                />
+              </label>
+              {repDraft !== (selected.visitedByRep ?? '') && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => patchStore(selected.id, { visitedByRep: repDraft })}
+                  className="w-full rounded-sm bg-red-mid px-3 py-2 text-sm font-semibold text-ink transition-colors hover:bg-red-deep disabled:opacity-50"
+                  style={{ boxShadow: '0 0 12px rgba(221,60,86,0.3)' }}
+                >
+                  {saving ? 'Salvando...' : 'Salvar representante'}
+                </button>
+              )}
 
               <div>
                 <span className="hud-label mb-1.5 block text-gold-dim">Tipo de loja</span>
