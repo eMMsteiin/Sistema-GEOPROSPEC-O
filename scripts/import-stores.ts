@@ -128,15 +128,62 @@ function parseArgs(argv: string[]): CliOptions {
   return opts;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const RETRY_DELAYS_MS = [3000, 10000, 30000]; // 3 tentativas extras, com espera crescente
+
+/**
+ * O `fetch` do Node não tem tempo-limite por padrão: se o servidor da Receita
+ * parar de mandar dado no meio de um download sem fechar a conexão, a promessa
+ * fica pendurada pra sempre — foi o que aconteceu (processo "rodando" por mais
+ * de uma hora sem nunca terminar, nem erro nem progresso). `withRetry` cobre as
+ * falhas que chegam a acontecer (timeout, conexão recusada); `abortStalled`
+ * cobre a que não chega a virar erro sozinha.
+ */
+async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= RETRY_DELAYS_MS.length) throw err;
+      const delay = RETRY_DELAYS_MS[attempt];
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`  ${label} falhou (${msg}) — tentativa ${attempt + 2}/${RETRY_DELAYS_MS.length + 1} em ${delay / 1000}s...`);
+      await sleep(delay);
+    }
+  }
+}
+
+/**
+ * Aborta se ficar `ms` sem novidade. `reset()` empurra o prazo pra frente de
+ * novo — chamado a cada pedaço recebido, então um download grande e devagar
+ * não é penalizado, só um que parou de vir dado no meio.
+ */
+function abortStalled(ms: number): { controller: AbortController; reset: () => void } {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(new Error(`sem resposta do servidor por ${ms / 1000}s`)), ms);
+  };
+  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  arm();
+  return { controller, reset: arm };
+}
+
 async function webdavList(dirPath: string): Promise<string[]> {
-  const res = await fetch(`${WEBDAV_BASE}${dirPath}`, {
-    method: 'PROPFIND',
-    headers: { Authorization: AUTH_HEADER, Depth: '1', 'User-Agent': USER_AGENT },
+  return withRetry(`PROPFIND ${dirPath}`, async () => {
+    const { controller } = abortStalled(20_000);
+    const res = await fetch(`${WEBDAV_BASE}${dirPath}`, {
+      method: 'PROPFIND',
+      headers: { Authorization: AUTH_HEADER, Depth: '1', 'User-Agent': USER_AGENT },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`PROPFIND ${dirPath} falhou: ${res.status} ${res.statusText}`);
+    const xml = await res.text();
+    const hrefs = [...xml.matchAll(/<d:href>([^<]+)<\/d:href>/g)].map((m) => decodeURIComponent(m[1]));
+    return hrefs;
   });
-  if (!res.ok) throw new Error(`PROPFIND ${dirPath} falhou: ${res.status} ${res.statusText}`);
-  const xml = await res.text();
-  const hrefs = [...xml.matchAll(/<d:href>([^<]+)<\/d:href>/g)].map((m) => decodeURIComponent(m[1]));
-  return hrefs;
 }
 
 async function resolvePeriod(requested: string | null): Promise<string> {
@@ -161,9 +208,47 @@ async function listZipParts(period: string, prefix: 'Estabelecimentos' | 'Empres
 
 async function downloadFile(period: string, fileName: string, destPath: string): Promise<void> {
   const url = `${WEBDAV_BASE}/${period}/${fileName}`;
-  const res = await fetch(url, { headers: { Authorization: AUTH_HEADER, 'User-Agent': USER_AGENT } });
-  if (!res.ok || !res.body) throw new Error(`Download de ${fileName} falhou: ${res.status} ${res.statusText}`);
-  await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), createWriteStream(destPath));
+  await withRetry(`Download de ${fileName}`, async () => {
+    // Watchdog de inatividade: reseta a cada pedaço recebido, não é um prazo
+    // fixo pro download inteiro (esses arquivos legitimamente demoram minutos).
+    // Só aborta quando o servidor para de mandar dado no meio do caminho —
+    // exatamente o jeito como ficou pendurado sem erro nenhum antes.
+    const { controller, reset } = abortStalled(30_000);
+    const res = await fetch(url, {
+      headers: { Authorization: AUTH_HEADER, 'User-Agent': USER_AGENT },
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`Download de ${fileName} falhou: ${res.status} ${res.statusText}`);
+
+    const reader = (res.body as import('node:stream/web').ReadableStream<Uint8Array>).getReader();
+    let aborted: unknown;
+    controller.signal.addEventListener('abort', () => {
+      aborted = controller.signal.reason;
+    });
+    const watchedStream = new ReadableStream<Uint8Array>({
+      async pull(streamController) {
+        const { done, value } = await reader.read();
+        if (aborted) {
+          streamController.error(aborted);
+          return;
+        }
+        reset(); // pedaço novo prova que o servidor ainda está vivo — empurra o relógio
+        if (done) {
+          streamController.close();
+          return;
+        }
+        streamController.enqueue(value);
+      },
+      cancel(reason) {
+        reader.cancel(reason);
+      },
+    });
+
+    await pipeline(
+      Readable.fromWeb(watchedStream as unknown as import('node:stream/web').ReadableStream),
+      createWriteStream(destPath),
+    );
+  });
 }
 
 async function extractZip(zipPath: string, destDir: string): Promise<string[]> {
