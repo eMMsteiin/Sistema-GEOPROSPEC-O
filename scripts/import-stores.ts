@@ -20,6 +20,7 @@
 //   npx tsx scripts/import-stores.ts --dry-run        # não grava no banco, só mostra o que faria
 //   npx tsx scripts/import-stores.ts --max-parts 1    # smoke test: só a 1ª parte de cada arquivo
 //   npx tsx scripts/import-stores.ts --limit 5        # processa (geocodifica/grava) no máx. 5 lojas
+//   npx tsx scripts/import-stores.ts --per-city 20    # até 20 lojas por cidade, priorizando loja física
 //   npx tsx scripts/import-stores.ts --period 2026-06 # usa uma pasta mensal específica
 //   npx tsx scripts/import-stores.ts --regeocode      # força regeocodificar tudo
 
@@ -78,6 +79,7 @@ const COL = {
 interface CliOptions {
   dryRun: boolean;
   limit: number | null;
+  perCity: number | null;
   maxParts: number | null;
   period: string | null;
   regeocode: boolean;
@@ -98,11 +100,19 @@ interface EstabRow {
 }
 
 function parseArgs(argv: string[]): CliOptions {
-  const opts: CliOptions = { dryRun: false, limit: null, maxParts: null, period: null, regeocode: false };
+  const opts: CliOptions = {
+    dryRun: false,
+    limit: null,
+    perCity: null,
+    maxParts: null,
+    period: null,
+    regeocode: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--dry-run') opts.dryRun = true;
     else if (arg === '--regeocode') opts.regeocode = true;
+    else if (arg === '--per-city') opts.perCity = Number.parseInt(argv[++i], 10);
     else if (arg === '--limit') opts.limit = Number.parseInt(argv[++i], 10);
     else if (arg === '--max-parts') opts.maxParts = Number.parseInt(argv[++i], 10);
     else if (arg === '--period') opts.period = argv[++i];
@@ -112,6 +122,7 @@ function parseArgs(argv: string[]): CliOptions {
     }
   }
   if (opts.limit !== null && !Number.isInteger(opts.limit)) throw new Error('--limit exige um número');
+  if (opts.perCity !== null && !Number.isInteger(opts.perCity)) throw new Error('--per-city exige um número');
   if (opts.maxParts !== null && !Number.isInteger(opts.maxParts)) throw new Error('--max-parts exige um número');
   if (opts.period !== null && !/^\d{4}-\d{2}$/.test(opts.period)) throw new Error('--period exige o formato YYYY-MM');
   return opts;
@@ -441,6 +452,56 @@ async function upsertStores(rows: EstabRow[], razaoByBasico: Map<string, string>
   );
 }
 
+/**
+ * Escolhe quais estabelecimentos processar.
+ *
+ * `--limit` sozinho é um corte global: como as linhas vêm na ordem do arquivo da
+ * Receita, ele enche a cota com as primeiras cidades e deixa as outras quase
+ * vazias. `--per-city` reserva uma cota por município.
+ *
+ * Dentro de cada cidade, loja física vem antes de revendedor individual (MEI):
+ * revendedor é a maioria esmagadora no CNAE 4772-5/00, então sem essa ordenação
+ * uma amostra de 20 sai quase toda de gente vendendo de casa, que é justamente
+ * o que menos interessa pra uma rota de visita.
+ */
+function selectRows(
+  rows: EstabRow[],
+  razaoByBasico: Map<string, string>,
+  opts: CliOptions,
+): EstabRow[] {
+  let pool = rows;
+
+  if (opts.perCity !== null) {
+    const isPhysical = (r: EstabRow) => {
+      const name = r.nomeFantasia || razaoByBasico.get(r.cnpjBasico) || '';
+      return classifyEstablishmentKind(`${name} ${razaoByBasico.get(r.cnpjBasico) ?? ''}`) === 'PHYSICAL_STORE';
+    };
+
+    const byCity = new Map<string, EstabRow[]>();
+    for (const r of rows) {
+      const list = byCity.get(r.city);
+      if (list) list.push(r);
+      else byCity.set(r.city, [r]);
+    }
+
+    pool = [];
+    for (const city of MVP_CITIES) {
+      const list = byCity.get(city) ?? [];
+      const active = list.filter((r) => r.active);
+      const physical = active.filter(isPhysical);
+      const resellers = active.filter((r) => !isPhysical(r));
+      const picked = [...physical, ...resellers].slice(0, opts.perCity);
+      pool.push(...picked);
+      console.log(
+        `  ${city}: ${picked.length} selecionadas de ${active.length} ativas ` +
+          `(${Math.min(physical.length, picked.length)} lojas físicas disponíveis: ${physical.length})`,
+      );
+    }
+  }
+
+  return opts.limit !== null ? pool.slice(0, opts.limit) : pool;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   await rm(WORK_DIR, { recursive: true, force: true });
@@ -471,8 +532,10 @@ async function main() {
     const basicos = new Set(rows.map((r) => r.cnpjBasico));
     const razaoByBasico = await scanEmpresas(period, empresaParts, basicos);
 
+    const selected = selectRows(rows, razaoByBasico, opts);
+
     console.log('\nGeocodificando e gravando (Nominatim, máx. 1 req/s — pode levar alguns minutos)...');
-    await upsertStores(rows, razaoByBasico, opts);
+    await upsertStores(selected, razaoByBasico, opts);
   } finally {
     await rm(WORK_DIR, { recursive: true, force: true });
   }
