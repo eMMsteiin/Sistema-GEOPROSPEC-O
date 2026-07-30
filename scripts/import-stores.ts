@@ -176,7 +176,7 @@ async function webdavList(dirPath: string): Promise<string[]> {
     const { controller } = abortStalled(20_000);
     const res = await fetch(`${WEBDAV_BASE}${dirPath}`, {
       method: 'PROPFIND',
-      headers: { Authorization: AUTH_HEADER, Depth: '1', 'User-Agent': USER_AGENT },
+      headers: { Authorization: AUTH_HEADER, Depth: '1', 'User-Agent': USER_AGENT, Connection: 'close' },
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`PROPFIND ${dirPath} falhou: ${res.status} ${res.statusText}`);
@@ -215,7 +215,14 @@ async function downloadFile(period: string, fileName: string, destPath: string):
     // exatamente o jeito como ficou pendurado sem erro nenhum antes.
     const { controller, reset } = abortStalled(30_000);
     const res = await fetch(url, {
-      headers: { Authorization: AUTH_HEADER, 'User-Agent': USER_AGENT },
+      // 'Connection: close' evita reaproveitar uma conexão keep-alive do
+      // undici pro mesmo host — foi exatamente isso que travou aqui: depois
+      // de puxar um arquivo de ~340MB inteiro, a próxima requisição na conexão
+      // reaproveitada nunca recebia resposta (nem erro, nem dado — só parava).
+      // Testado à parte com curl puro (conexão nova sempre): sem esse
+      // problema, ~850KB/s constante — confirma que é reuso de conexão, não
+      // limitação do servidor.
+      headers: { Authorization: AUTH_HEADER, 'User-Agent': USER_AGENT, Connection: 'close' },
       signal: controller.signal,
     });
     if (!res.ok || !res.body) throw new Error(`Download de ${fileName} falhou: ${res.status} ${res.statusText}`);
