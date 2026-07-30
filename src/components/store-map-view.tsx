@@ -24,7 +24,7 @@ const StoreMap = dynamic(() => import('./store-map'), {
 
 export interface StoreWithIncome {
   id: string;
-  cnpj: string;
+  cnpj: string | null;
   name: string;
   address: string | null;
   addressNumber: string | null;
@@ -101,8 +101,8 @@ const TIER_LABELS: Record<number, string> = {
 
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-const formatCnpj = (c: string) =>
-  c.length === 14 ? `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}` : c;
+const formatCnpj = (c: string | null) =>
+  c && c.length === 14 ? `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}` : c;
 
 function TierDot({ tier }: { tier: number }) {
   return (
@@ -588,7 +588,9 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
               </div>
               <div>
                 <dt className="hud-label text-gold-dim">CNPJ</dt>
-                <dd className="font-mono text-[13px] text-ink">{formatCnpj(selected.cnpj)}</dd>
+                <dd className="font-mono text-[13px] text-ink">
+                  {selected.cnpj ? formatCnpj(selected.cnpj) : 'Não confirmado ainda'}
+                </dd>
               </div>
             </dl>
 

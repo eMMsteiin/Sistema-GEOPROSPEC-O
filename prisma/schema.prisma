@@ -48,7 +48,7 @@ enum GeocodePrecision {
 
 model Store {
   id                    String            @id @default(cuid())
-  cnpj                  String            @unique
+  cnpj                  String?           @unique // null = cadastrada manualmente sem CNPJ confirmado ainda
   name                  String
   address               String? // logradouro só (ex.: "Rua Quirino Zagonel")
   addressNumber         String? // número de porta; null = sem número (s/n)

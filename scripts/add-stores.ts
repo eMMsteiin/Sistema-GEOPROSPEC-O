@@ -1,39 +1,71 @@
-// Cadastra lojas manualmente por CNPJ — para quando a existência real da loja
-// já foi confirmada por fora (busca na web, Google Maps etc.), sem depender do
-// import em massa da Receita. Puxa o cadastro oficial completo via BrasilAPI
-// (mesma fonte já usada no /api/cnpj do sistema de pedidos), geocodifica e
-// classifica do mesmo jeito que o import em massa — só que aqui o tipo de
-// estabelecimento é sempre "loja física" e travado (establishmentKindAuto =
-// false), porque a verificação humana que already aconteceu é mais confiável
-// que o padrão de nome que o classificador automático usa como aproximação.
+// Cadastra lojas manualmente — para quando a existência real da loja já foi
+// confirmada por fora (busca na web, Google Maps etc.), sem depender do
+// import em massa da Receita. Duas modalidades por entrada:
+//
+//   Com CNPJ:    puxa o cadastro oficial completo via BrasilAPI (mesma fonte
+//                já usada no /api/cnpj do sistema de pedidos) — endereço,
+//                bairro, CEP, telefone, situação cadastral.
+//   Sem CNPJ:    na prática, a maioria das lojas pequenas/MEI reais que uma
+//                pesquisa externa encontra NÃO tem CNPJ localizável em base
+//                gratuita (~16% de acerto, medido numa leva real de ~25
+//                lojas) — cadastra só com nome + endereço + cidade, deixando
+//                o CNPJ pra completar depois se aparecer.
+//
+// Nos dois casos, geocodifica e classifica pelo mesmo pipeline compartilhado
+// do import em massa, e o tipo de estabelecimento sai sempre como "loja
+// física" travada (establishmentKindAuto = false) — a verificação humana que
+// já aconteceu é mais confiável que o padrão de nome que o classificador
+// automático usa como aproximação.
+//
+// Formato de cada entrada (uma por linha no --file, ou um argumento por loja):
+//   <CNPJ>                                            — busca completa na Receita
+//   <CNPJ>|Rua Nome, Número|Bairro                     — busca + corrige endereço
+//                                                         (a Receita às vezes não
+//                                                         tem logradouro/número
+//                                                         pra micro-loja — aconteceu
+//                                                         de verdade: Bia Bella,
+//                                                         22.745.360/0001-55)
+//   Nome da loja|Rua Nome, Número|Bairro|Cidade|Telefone  — sem CNPJ (Cidade
+//                                                            obrigatória, Bairro
+//                                                            e Telefone opcionais)
 //
 // Uso:
-//   npx tsx scripts/add-stores.ts 64096318000109 11222333000181
-//   npx tsx scripts/add-stores.ts --file lojas.txt      # um CNPJ por linha
+//   npx tsx scripts/add-stores.ts 64096318000109 "Bia Bella|Rua X, 10|Centro"
+//   npx tsx scripts/add-stores.ts --file lojas.txt
 //   npx tsx scripts/add-stores.ts --dry-run 64096318000109
 
 import { PrismaClient } from '@prisma/client';
 import { readFile } from 'node:fs/promises';
 import {
   IBGE_CODE_BY_CITY,
+  MVP_CITIES,
   WAREHOUSE,
   classifyStoreType,
   formatFullAddress,
   haversineKm,
   normalizeHouseNumber,
+  normalizeName,
 } from '../src/lib/pdv';
 import { geocodeAddress } from '../src/lib/geocode';
+import type { GeocodePrecision } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const USER_AGENT = 'mapa-pdvs-vitiss-add-stores/1.0 (stein100706@gmail.com)';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const CITY_BY_IBGE_CODE = new Map(Object.entries(IBGE_CODE_BY_CITY).map(([city, code]) => [code, city]));
+const CITY_BY_NORM_NAME = new Map(MVP_CITIES.map((c) => [normalizeName(c), c]));
 
 function titleCase(s: string): string {
   return s
     .toLowerCase()
     .replace(/(^|[\s(/-])([a-zà-ÿ])/g, (_, sep: string, ch: string) => sep + ch.toUpperCase());
+}
+
+/** "Rua Nome, Número" → partes separadas; sem vírgula, tudo vira o nome da rua. */
+function splitStreetAndNumber(s: string): { address: string; addressNumber: string | null } {
+  const m = s.match(/^(.*?),\s*(\S+)$/);
+  return m ? { address: m[1].trim(), addressNumber: normalizeHouseNumber(m[2]) } : { address: s, addressNumber: null };
 }
 
 interface BrasilApiCnpj {
@@ -67,28 +99,48 @@ interface AddressOverride {
   neighborhood?: string;
 }
 
-/**
- * Cada entrada pode ser só o CNPJ, ou "CNPJ|Rua Nome, Número|Bairro" — o
- * cadastro da Receita frequentemente não tem logradouro/número pra micro-loja
- * (aconteceu na prática: Bia Bella, CNPJ 22.745.360/0001-55, veio com rua e
- * número em branco), mas uma pesquisa externa às vezes já traz o endereço
- * comercial certo. Bairro e CEP continuam vindo da Receita mesmo com override.
- */
-function parseEntry(entry: string): { cnpj: string; override: AddressOverride } {
-  const [cnpjPart, addrPart, bairroPart] = entry.split('|').map((s) => s.trim());
-  const cnpj = cnpjPart.replace(/\D/g, '');
-  const override: AddressOverride = {};
-  if (addrPart) {
-    const m = addrPart.match(/^(.*?),\s*(\S+)$/);
-    if (m) {
-      override.address = m[1].trim();
-      override.addressNumber = normalizeHouseNumber(m[2]);
-    } else {
-      override.address = addrPart;
-    }
+interface ManualEntry {
+  name: string;
+  address: string | null;
+  addressNumber: string | null;
+  neighborhood: string | null;
+  city: string;
+  phone: string | null;
+}
+
+type ParsedEntry = { kind: 'cnpj'; cnpj: string; override: AddressOverride } | { kind: 'manual'; data: ManualEntry };
+
+/** Primeiro campo com 14 dígitos após tirar pontuação = CNPJ; senão é nome (modo manual). */
+function parseEntry(entry: string): ParsedEntry | null {
+  const parts = entry.split('|').map((s) => s.trim());
+  const firstDigits = parts[0].replace(/\D/g, '');
+
+  if (firstDigits.length === 14) {
+    const override: AddressOverride = {};
+    if (parts[1]) Object.assign(override, splitStreetAndNumber(parts[1]));
+    if (parts[2]) override.neighborhood = parts[2];
+    return { kind: 'cnpj', cnpj: firstDigits, override };
   }
-  if (bairroPart) override.neighborhood = bairroPart;
-  return { cnpj, override };
+
+  const [name, addrPart, bairroPart, cidadePart, telefonePart] = parts;
+  if (!name || !cidadePart) return null; // sem cidade não dá pra saber se está na área coberta
+  const city = CITY_BY_NORM_NAME.get(normalizeName(cidadePart));
+  if (!city) {
+    console.warn(`  [cidade não reconhecida] "${cidadePart}" (entrada: ${name}) — cidades cobertas: ${MVP_CITIES.join(', ')}`);
+    return null;
+  }
+  const { address, addressNumber } = addrPart ? splitStreetAndNumber(addrPart) : { address: null, addressNumber: null };
+  return {
+    kind: 'manual',
+    data: {
+      name,
+      address,
+      addressNumber,
+      neighborhood: bairroPart || null,
+      city,
+      phone: telefonePart || null,
+    },
+  };
 }
 
 function parseArgs(argv: string[]): { dryRun: boolean; entries: string[]; file: string | null } {
@@ -101,6 +153,63 @@ function parseArgs(argv: string[]): { dryRun: boolean; entries: string[]; file: 
     (a, i) => a !== '--dry-run' && (fileIdx < 0 || (i !== fileIdx && i !== fileIdx + 1)) && !a.startsWith('--'),
   );
   return { dryRun, entries, file };
+}
+
+interface FreshStoreData {
+  name: string;
+  address: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  postalCode: string | null;
+  neighborhood: string | null;
+  city: string;
+  state: string;
+  phone: string | null;
+  cnaeActive: boolean;
+  lat: number | null;
+  lng: number | null;
+  geocodePrecision: GeocodePrecision;
+  distanceKm: number | null;
+  establishmentKind: 'PHYSICAL_STORE';
+  establishmentKindAuto: false;
+}
+
+async function buildFresh(
+  name: string,
+  address: string | null,
+  addressNumber: string | null,
+  neighborhood: string | null,
+  city: string,
+  state: string,
+  postalCode: string | null,
+  phone: string | null,
+  cnaeActive: boolean,
+): Promise<{ fresh: FreshStoreData; geocoded: boolean }> {
+  const geo = await geocodeAddress({ address, addressNumber, postalCode, neighborhood, city });
+  const distanceKm = geo ? Math.round(haversineKm(WAREHOUSE.lat, WAREHOUSE.lng, geo.lat, geo.lng) * 10) / 10 : null;
+  return {
+    fresh: {
+      name,
+      address,
+      addressNumber,
+      addressComplement: null,
+      postalCode,
+      neighborhood,
+      city,
+      state,
+      phone,
+      cnaeActive,
+      lat: geo?.lat ?? null,
+      lng: geo?.lng ?? null,
+      geocodePrecision: geo?.precision ?? 'NONE',
+      distanceKm,
+      // Confirmada por fora como loja física de verdade — trava a
+      // classificação pra não ser sobrescrita num reimport em massa futuro.
+      establishmentKind: 'PHYSICAL_STORE',
+      establishmentKindAuto: false,
+    },
+    geocoded: Boolean(geo),
+  };
 }
 
 async function main() {
@@ -117,111 +226,118 @@ async function main() {
     );
   }
 
-  const byCnpj = new Map<string, AddressOverride>();
-  for (const entry of rawEntries) {
-    const { cnpj, override } = parseEntry(entry);
-    if (cnpj.length === 14) byCnpj.set(cnpj, override);
-  }
-  const cnpjs = [...byCnpj.keys()];
-  if (cnpjs.length === 0) {
+  const entries = rawEntries.map(parseEntry).filter((e): e is ParsedEntry => e !== null);
+  if (entries.length === 0) {
     console.error(
-      'Nenhum CNPJ válido informado (precisa de 14 dígitos). Uso:\n' +
-        '  npx tsx scripts/add-stores.ts <cnpj...> [--file lista.txt] [--dry-run]\n' +
-        '  cada entrada pode ser "CNPJ" ou "CNPJ|Rua Nome, Número|Bairro" (override de endereço)',
+      'Nenhuma entrada válida. Uso:\n' +
+        '  npx tsx scripts/add-stores.ts <entrada...> [--file lista.txt] [--dry-run]\n' +
+        '  "<CNPJ>" | "<CNPJ>|Rua Nome, Número|Bairro" | "Nome|Rua Nome, Número|Bairro|Cidade|Telefone"',
     );
     process.exit(1);
   }
 
-  console.log(`${cnpjs.length} CNPJ(s) pra processar${dryRun ? ' (dry-run: nada será gravado)' : ''}.\n`);
+  console.log(`${entries.length} entrada(s) pra processar${dryRun ? ' (dry-run: nada será gravado)' : ''}.\n`);
 
   let created = 0, updated = 0, skippedCity = 0, skippedNotFound = 0, skippedNoGeo = 0;
 
-  for (const cnpj of cnpjs) {
-    const override = byCnpj.get(cnpj) ?? {};
-    const data = await fetchCnpj(cnpj);
-    await sleep(400); // sem política pública de rate limit documentada — throttle leve por educação
+  for (const entry of entries) {
+    if (entry.kind === 'cnpj') {
+      const { cnpj, override } = entry;
+      const data = await fetchCnpj(cnpj);
+      await sleep(400); // sem política pública de rate limit documentada — throttle leve por educação
 
-    if (!data) {
-      console.warn(`  [não encontrado] ${cnpj}`);
-      skippedNotFound++;
+      if (!data) {
+        console.warn(`  [não encontrado] ${cnpj}`);
+        skippedNotFound++;
+        continue;
+      }
+
+      const city = CITY_BY_IBGE_CODE.get(String(data.codigo_municipio_ibge));
+      if (!city) {
+        console.warn(`  [fora da área coberta] ${data.razao_social} — ${data.municipio}/${data.uf}`);
+        skippedCity++;
+        continue;
+      }
+
+      const name = data.nome_fantasia?.trim() || data.razao_social;
+      const logradouro = [data.descricao_tipo_de_logradouro, data.logradouro].filter(Boolean).join(' ').trim();
+      let address = logradouro ? titleCase(logradouro) : null;
+      let addressNumber = normalizeHouseNumber(data.numero);
+      let neighborhood = data.bairro?.trim() ? titleCase(data.bairro.trim()) : null;
+
+      if (override.address) {
+        console.log(`  [override] ${name}: endereço da Receita era "${address ?? '(vazio)'}, ${addressNumber ?? 's/n'}" — usando "${override.address}, ${override.addressNumber ?? 's/n'}"`);
+        address = override.address;
+        addressNumber = override.addressNumber ?? null;
+      }
+      if (override.neighborhood) neighborhood = override.neighborhood;
+
+      const cepDigits = (data.cep ?? '').replace(/\D/g, '');
+      const postalCode = cepDigits.length === 8 ? cepDigits : null;
+      const phoneDigits = (data.ddd_telefone_1 ?? '').replace(/\D/g, '');
+      const phone = phoneDigits.length >= 10 ? `(${phoneDigits.slice(0, 2)}) ${phoneDigits.slice(2)}` : null;
+      const cnaeActive = data.descricao_situacao_cadastral === 'ATIVA';
+
+      const { fresh, geocoded } = await buildFresh(name, address, addressNumber, neighborhood, city, data.uf, postalCode, phone, cnaeActive);
+      if (!geocoded) {
+        console.warn(`  [sem geocodificação] ${name} — ${formatFullAddress(fresh)}`);
+        skippedNoGeo++;
+      }
+      const autoType = classifyStoreType(`${name} ${data.razao_social}`);
+      const addr = formatFullAddress(fresh);
+
+      if (dryRun) {
+        console.log(`  [dry-run] ${name} | ${cnpj} | ${addr} | precisão=${fresh.geocodePrecision}`);
+        continue;
+      }
+
+      const existing = await prisma.store.findUnique({ where: { cnpj } });
+      if (existing) {
+        await prisma.store.update({
+          where: { cnpj },
+          data: { ...fresh, ...(existing.storeTypeAuto ? { storeType: autoType } : {}) },
+        });
+        console.log(`  [atualizada] ${name} — ${addr}`);
+        updated++;
+      } else {
+        await prisma.store.create({ data: { cnpj, ...fresh, storeType: autoType, storeTypeAuto: true } });
+        console.log(`  [criada] ${name} — ${addr}`);
+        created++;
+      }
       continue;
     }
 
-    const city = CITY_BY_IBGE_CODE.get(String(data.codigo_municipio_ibge));
-    if (!city) {
-      console.warn(`  [fora da área coberta] ${data.razao_social} — ${data.municipio}/${data.uf}`);
-      skippedCity++;
-      continue;
+    // --- modo manual (sem CNPJ) ---
+    const { name, address, addressNumber, neighborhood, city, phone } = entry.data;
+    const { fresh, geocoded } = await buildFresh(name, address, addressNumber, neighborhood, city, 'PR', null, phone, true);
+    if (!geocoded) {
+      console.warn(`  [sem geocodificação] ${name} — ${formatFullAddress(fresh)}`);
+      skippedNoGeo++;
     }
+    const autoType = classifyStoreType(name);
+    const addr = formatFullAddress(fresh);
 
-    const name = data.nome_fantasia?.trim() || data.razao_social;
-    const logradouro = [data.descricao_tipo_de_logradouro, data.logradouro].filter(Boolean).join(' ').trim();
-    let address = logradouro ? titleCase(logradouro) : null;
-    let addressNumber = normalizeHouseNumber(data.numero);
-    const addressComplement = data.complemento?.trim() ? titleCase(data.complemento.trim()) : null;
-    let neighborhood = data.bairro?.trim() ? titleCase(data.bairro.trim()) : null;
-
-    if (override.address) {
-      console.log(`  [override] ${name}: endereço da Receita era "${address ?? '(vazio)'}, ${addressNumber ?? 's/n'}" — usando "${override.address}, ${override.addressNumber ?? 's/n'}"`);
-      address = override.address;
-      addressNumber = override.addressNumber ?? null;
-    }
-    if (override.neighborhood) neighborhood = override.neighborhood;
-    const cepDigits = (data.cep ?? '').replace(/\D/g, '');
-    const postalCode = cepDigits.length === 8 ? cepDigits : null;
-    const phoneDigits = (data.ddd_telefone_1 ?? '').replace(/\D/g, '');
-    const phone = phoneDigits.length >= 10 ? `(${phoneDigits.slice(0, 2)}) ${phoneDigits.slice(2)}` : null;
-    const cnaeActive = data.descricao_situacao_cadastral === 'ATIVA';
-
-    const geo = await geocodeAddress({ address, addressNumber, postalCode, neighborhood, city });
-    if (!geo) {
-      console.warn(`  [sem geocodificação] ${name} — ${formatFullAddress({ address, addressNumber, addressComplement, postalCode, neighborhood, city, state: data.uf })}`);
-    }
-    const distanceKm = geo ? Math.round(haversineKm(WAREHOUSE.lat, WAREHOUSE.lng, geo.lat, geo.lng) * 10) / 10 : null;
-    if (!geo) skippedNoGeo++;
-
-    const autoType = classifyStoreType(`${name} ${data.razao_social}`);
-
-    const fresh = {
-      name,
-      address,
-      addressNumber,
-      addressComplement,
-      postalCode,
-      neighborhood,
-      city,
-      state: data.uf,
-      phone,
-      cnaeActive,
-      lat: geo?.lat ?? null,
-      lng: geo?.lng ?? null,
-      geocodePrecision: geo?.precision ?? 'NONE',
-      distanceKm,
-      // Confirmada por fora como loja física de verdade — trava a
-      // classificação pra não ser sobrescrita num reimport em massa futuro.
-      establishmentKind: 'PHYSICAL_STORE' as const,
-      establishmentKindAuto: false,
-    };
-
-    const addr = formatFullAddress({ ...fresh });
     if (dryRun) {
-      console.log(`  [dry-run] ${name} | ${cnpj} | ${addr} | precisão=${fresh.geocodePrecision}`);
+      console.log(`  [dry-run, sem CNPJ] ${name} | ${addr} | precisão=${fresh.geocodePrecision}`);
       continue;
     }
 
-    const existing = await prisma.store.findUnique({ where: { cnpj } });
-    if (existing) {
+    // Sem CNPJ não tem chave de upsert natural — casa por nome normalizado +
+    // cidade entre o que já existe (com ou sem CNPJ) pra não duplicar se essa
+    // mesma loja já veio do import em massa ou de uma leva manual anterior.
+    const sameCity = await prisma.store.findMany({ where: { city }, select: { id: true, name: true, storeTypeAuto: true } });
+    const match = sameCity.find((s) => normalizeName(s.name) === normalizeName(name));
+
+    if (match) {
       await prisma.store.update({
-        where: { cnpj },
-        data: { ...fresh, ...(existing.storeTypeAuto ? { storeType: autoType } : {}) },
+        where: { id: match.id },
+        data: { ...fresh, ...(match.storeTypeAuto ? { storeType: autoType } : {}) },
       });
-      console.log(`  [atualizada] ${name} — ${addr}`);
+      console.log(`  [atualizada, sem CNPJ] ${name} — ${addr}`);
       updated++;
     } else {
-      await prisma.store.create({
-        data: { cnpj, ...fresh, storeType: autoType, storeTypeAuto: true },
-      });
-      console.log(`  [criada] ${name} — ${addr}`);
+      await prisma.store.create({ data: { cnpj: null, ...fresh, storeType: autoType, storeTypeAuto: true } });
+      console.log(`  [criada, sem CNPJ] ${name} — ${addr}`);
       created++;
     }
   }
