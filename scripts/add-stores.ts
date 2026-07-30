@@ -61,31 +61,74 @@ async function fetchCnpj(cnpj: string): Promise<BrasilApiCnpj | null> {
   return (await res.json()) as BrasilApiCnpj;
 }
 
-function parseArgs(argv: string[]): { dryRun: boolean; cnpjs: string[]; file: string | null } {
+interface AddressOverride {
+  address?: string;
+  addressNumber?: string | null;
+  neighborhood?: string;
+}
+
+/**
+ * Cada entrada pode ser só o CNPJ, ou "CNPJ|Rua Nome, Número|Bairro" — o
+ * cadastro da Receita frequentemente não tem logradouro/número pra micro-loja
+ * (aconteceu na prática: Bia Bella, CNPJ 22.745.360/0001-55, veio com rua e
+ * número em branco), mas uma pesquisa externa às vezes já traz o endereço
+ * comercial certo. Bairro e CEP continuam vindo da Receita mesmo com override.
+ */
+function parseEntry(entry: string): { cnpj: string; override: AddressOverride } {
+  const [cnpjPart, addrPart, bairroPart] = entry.split('|').map((s) => s.trim());
+  const cnpj = cnpjPart.replace(/\D/g, '');
+  const override: AddressOverride = {};
+  if (addrPart) {
+    const m = addrPart.match(/^(.*?),\s*(\S+)$/);
+    if (m) {
+      override.address = m[1].trim();
+      override.addressNumber = normalizeHouseNumber(m[2]);
+    } else {
+      override.address = addrPart;
+    }
+  }
+  if (bairroPart) override.neighborhood = bairroPart;
+  return { cnpj, override };
+}
+
+function parseArgs(argv: string[]): { dryRun: boolean; entries: string[]; file: string | null } {
   const dryRun = argv.includes('--dry-run');
   const fileIdx = argv.indexOf('--file');
   const file = fileIdx >= 0 ? argv[fileIdx + 1] : null;
-  const cnpjs = argv.filter((a, i) => a !== '--dry-run' && i !== fileIdx && i !== fileIdx + 1 && !a.startsWith('--'));
-  return { dryRun, cnpjs, file };
+  // fileIdx = -1 quando --file não foi passado — sem essa checagem, "i !==
+  // fileIdx + 1" vira "i !== 0" e derruba silenciosamente o 1º argumento real.
+  const entries = argv.filter(
+    (a, i) => a !== '--dry-run' && (fileIdx < 0 || (i !== fileIdx && i !== fileIdx + 1)) && !a.startsWith('--'),
+  );
+  return { dryRun, entries, file };
 }
 
 async function main() {
-  const { dryRun, cnpjs: cliCnpjs, file } = parseArgs(process.argv.slice(2));
+  const { dryRun, entries: cliEntries, file } = parseArgs(process.argv.slice(2));
 
-  const raw = [...cliCnpjs];
+  const rawEntries = [...cliEntries];
   if (file) {
     const content = await readFile(file, 'utf-8');
-    raw.push(
+    rawEntries.push(
       ...content
         .split('\n')
-        .map((l) => l.split(/[\s,;]/)[0]) // primeira "palavra" da linha — permite comentário depois
+        .map((l) => l.split('#')[0].trim()) // '#' inicia comentário na linha
         .filter(Boolean),
     );
   }
 
-  const cnpjs = [...new Set(raw.map((c) => c.replace(/\D/g, '')).filter((c) => c.length === 14))];
+  const byCnpj = new Map<string, AddressOverride>();
+  for (const entry of rawEntries) {
+    const { cnpj, override } = parseEntry(entry);
+    if (cnpj.length === 14) byCnpj.set(cnpj, override);
+  }
+  const cnpjs = [...byCnpj.keys()];
   if (cnpjs.length === 0) {
-    console.error('Nenhum CNPJ válido informado (precisa de 14 dígitos). Uso: npx tsx scripts/add-stores.ts <cnpj...> [--file lista.txt] [--dry-run]');
+    console.error(
+      'Nenhum CNPJ válido informado (precisa de 14 dígitos). Uso:\n' +
+        '  npx tsx scripts/add-stores.ts <cnpj...> [--file lista.txt] [--dry-run]\n' +
+        '  cada entrada pode ser "CNPJ" ou "CNPJ|Rua Nome, Número|Bairro" (override de endereço)',
+    );
     process.exit(1);
   }
 
@@ -94,6 +137,7 @@ async function main() {
   let created = 0, updated = 0, skippedCity = 0, skippedNotFound = 0, skippedNoGeo = 0;
 
   for (const cnpj of cnpjs) {
+    const override = byCnpj.get(cnpj) ?? {};
     const data = await fetchCnpj(cnpj);
     await sleep(400); // sem política pública de rate limit documentada — throttle leve por educação
 
@@ -112,10 +156,17 @@ async function main() {
 
     const name = data.nome_fantasia?.trim() || data.razao_social;
     const logradouro = [data.descricao_tipo_de_logradouro, data.logradouro].filter(Boolean).join(' ').trim();
-    const address = logradouro ? titleCase(logradouro) : null;
-    const addressNumber = normalizeHouseNumber(data.numero);
+    let address = logradouro ? titleCase(logradouro) : null;
+    let addressNumber = normalizeHouseNumber(data.numero);
     const addressComplement = data.complemento?.trim() ? titleCase(data.complemento.trim()) : null;
-    const neighborhood = data.bairro?.trim() ? titleCase(data.bairro.trim()) : null;
+    let neighborhood = data.bairro?.trim() ? titleCase(data.bairro.trim()) : null;
+
+    if (override.address) {
+      console.log(`  [override] ${name}: endereço da Receita era "${address ?? '(vazio)'}, ${addressNumber ?? 's/n'}" — usando "${override.address}, ${override.addressNumber ?? 's/n'}"`);
+      address = override.address;
+      addressNumber = override.addressNumber ?? null;
+    }
+    if (override.neighborhood) neighborhood = override.neighborhood;
     const cepDigits = (data.cep ?? '').replace(/\D/g, '');
     const postalCode = cepDigits.length === 8 ? cepDigits : null;
     const phoneDigits = (data.ddd_telefone_1 ?? '').replace(/\D/g, '');
