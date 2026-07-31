@@ -11,7 +11,7 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
 import type { EstablishmentKind, GeocodePrecision, ProspectStatus, StoreType } from '@prisma/client';
-import { formatFullAddress, googleMapsUrl } from '@/lib/pdv';
+import { formatFullAddress, googleMapsSearchUrl } from '@/lib/pdv';
 
 const StoreMap = dynamic(() => import('./store-map'), {
   ssr: false,
@@ -45,6 +45,7 @@ export interface StoreWithIncome {
   phone: string | null;
   notes: string | null;
   visitedByRep: string | null;
+  googleMapsUrl: string | null;
   cnaeActive: boolean;
   avgIncome: number | null;
   incomeSource: string | null;
@@ -221,6 +222,9 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
     setSaveError(null);
   };
 
+  /** Link confirmado (place_id real) quando existe; senão, busca por texto gerada do endereço. */
+  const mapsUrlFor = (store: StoreWithIncome) => store.googleMapsUrl ?? googleMapsSearchUrl(store);
+
   /**
    * Mensagem pronta pra mandar pro representante que vai visitar a loja.
    * Vai como link de compartilhamento do WhatsApp (wa.me sem número abre a
@@ -233,7 +237,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
       formatFullAddress(store),
       store.addressComplement ? `Complemento: ${store.addressComplement}` : null,
       store.phone ? `Telefone da loja: ${store.phone}` : null,
-      googleMapsUrl(store),
+      mapsUrlFor(store),
     ]
       .filter(Boolean)
       .join('\n');
@@ -541,12 +545,13 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                   </p>
                 )}
                 <div className="mt-1.5 flex flex-wrap items-center gap-3">
-                  {googleMapsUrl(selected) && (
+                  {mapsUrlFor(selected) && (
                     <a
-                      href={googleMapsUrl(selected) as string}
+                      href={mapsUrlFor(selected) as string}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-[11px] text-gold hover:underline"
+                      title={selected.googleMapsUrl ? 'Link confirmado' : 'Busca aproximada pelo endereço'}
                     >
                       Abrir no Google Maps →
                     </a>

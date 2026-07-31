@@ -165,8 +165,12 @@ export function formatFullAddress(s: AddressParts, opts: { forQuery?: boolean } 
   return [head, tail].filter(Boolean).join(', ');
 }
 
-/** Link de busca do Google Maps a partir do endereço em texto. */
-export function googleMapsUrl(s: AddressParts): string | null {
+/**
+ * Link de busca do Google Maps a partir do endereço em texto — aproximado,
+ * o Google resolve a consulta na hora. Usado só como fallback quando a loja
+ * não tem um link confirmado (Store.googleMapsUrl, vindo de place_id real).
+ */
+export function googleMapsSearchUrl(s: AddressParts): string | null {
   if (!s.address && !s.postalCode) return null;
   const query = formatFullAddress(s, { forQuery: true });
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;

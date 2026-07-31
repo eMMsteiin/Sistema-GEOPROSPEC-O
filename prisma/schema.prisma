@@ -61,6 +61,7 @@ model Store {
   lng                   Float?
   geocodePrecision      GeocodePrecision  @default(NONE)
   distanceKm            Float?
+  googleMapsUrl         String? // link direto confirmado (place_id) — quando presente, substitui o link de busca gerado pelo endereço
   storeType             StoreType         @default(MULTIBRAND)
   storeTypeAuto         Boolean           @default(true) // false = corrigido manualmente, import não sobrescreve mais
   establishmentKind     EstablishmentKind @default(PHYSICAL_STORE)

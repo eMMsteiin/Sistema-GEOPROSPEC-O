@@ -18,16 +18,14 @@
 // automático usa como aproximação.
 //
 // Formato de cada entrada (uma por linha no --file, ou um argumento por loja):
-//   <CNPJ>                                            — busca completa na Receita
-//   <CNPJ>|Rua Nome, Número|Bairro                     — busca + corrige endereço
-//                                                         (a Receita às vezes não
-//                                                         tem logradouro/número
-//                                                         pra micro-loja — aconteceu
-//                                                         de verdade: Bia Bella,
-//                                                         22.745.360/0001-55)
-//   Nome da loja|Rua Nome, Número|Bairro|Cidade|Telefone  — sem CNPJ (Cidade
-//                                                            obrigatória, Bairro
-//                                                            e Telefone opcionais)
+//   <CNPJ>
+//   <CNPJ>|Rua Nome, Número|Bairro|LinkMaps|Notas
+//   Nome da loja|Rua Nome, Número|Bairro|Cidade|Telefone|LinkMaps|Notas
+//
+// Endereço, bairro, LinkMaps e Notas são opcionais (deixar vazio entre os
+// pipes) — Cidade é obrigatória no modo sem CNPJ. LinkMaps, quando informado
+// (ex.: link de place_id confirmado no Google), substitui o link de busca
+// aproximado que o sistema geraria a partir do endereço.
 //
 // Uso:
 //   npx tsx scripts/add-stores.ts 64096318000109 "Bia Bella|Rua X, 10|Centro"
@@ -97,6 +95,8 @@ interface AddressOverride {
   address?: string;
   addressNumber?: string | null;
   neighborhood?: string;
+  googleMapsUrl?: string;
+  notes?: string;
 }
 
 interface ManualEntry {
@@ -106,6 +106,8 @@ interface ManualEntry {
   neighborhood: string | null;
   city: string;
   phone: string | null;
+  googleMapsUrl: string | null;
+  notes: string | null;
 }
 
 type ParsedEntry = { kind: 'cnpj'; cnpj: string; override: AddressOverride } | { kind: 'manual'; data: ManualEntry };
@@ -119,10 +121,12 @@ function parseEntry(entry: string): ParsedEntry | null {
     const override: AddressOverride = {};
     if (parts[1]) Object.assign(override, splitStreetAndNumber(parts[1]));
     if (parts[2]) override.neighborhood = parts[2];
+    if (parts[3]) override.googleMapsUrl = parts[3];
+    if (parts[4]) override.notes = parts[4];
     return { kind: 'cnpj', cnpj: firstDigits, override };
   }
 
-  const [name, addrPart, bairroPart, cidadePart, telefonePart] = parts;
+  const [name, addrPart, bairroPart, cidadePart, telefonePart, mapsPart, notesPart] = parts;
   if (!name || !cidadePart) return null; // sem cidade não dá pra saber se está na área coberta
   const city = CITY_BY_NORM_NAME.get(normalizeName(cidadePart));
   if (!city) {
@@ -139,6 +143,8 @@ function parseEntry(entry: string): ParsedEntry | null {
       neighborhood: bairroPart || null,
       city,
       phone: telefonePart || null,
+      googleMapsUrl: mapsPart || null,
+      notes: notesPart || null,
     },
   };
 }
@@ -165,6 +171,7 @@ interface FreshStoreData {
   city: string;
   state: string;
   phone: string | null;
+  googleMapsUrl: string | null;
   cnaeActive: boolean;
   lat: number | null;
   lng: number | null;
@@ -183,6 +190,7 @@ async function buildFresh(
   state: string,
   postalCode: string | null,
   phone: string | null,
+  googleMapsUrl: string | null,
   cnaeActive: boolean,
 ): Promise<{ fresh: FreshStoreData; geocoded: boolean }> {
   const geo = await geocodeAddress({ address, addressNumber, postalCode, neighborhood, city });
@@ -198,6 +206,7 @@ async function buildFresh(
       city,
       state,
       phone,
+      googleMapsUrl,
       cnaeActive,
       lat: geo?.lat ?? null,
       lng: geo?.lng ?? null,
@@ -231,7 +240,7 @@ async function main() {
     console.error(
       'Nenhuma entrada válida. Uso:\n' +
         '  npx tsx scripts/add-stores.ts <entrada...> [--file lista.txt] [--dry-run]\n' +
-        '  "<CNPJ>" | "<CNPJ>|Rua Nome, Número|Bairro" | "Nome|Rua Nome, Número|Bairro|Cidade|Telefone"',
+        '  "<CNPJ>" | "<CNPJ>|Rua Nome, Número|Bairro|LinkMaps|Notas" | "Nome|Rua Nome, Número|Bairro|Cidade|Telefone|LinkMaps|Notas"',
     );
     process.exit(1);
   }
@@ -278,7 +287,9 @@ async function main() {
       const phone = phoneDigits.length >= 10 ? `(${phoneDigits.slice(0, 2)}) ${phoneDigits.slice(2)}` : null;
       const cnaeActive = data.descricao_situacao_cadastral === 'ATIVA';
 
-      const { fresh, geocoded } = await buildFresh(name, address, addressNumber, neighborhood, city, data.uf, postalCode, phone, cnaeActive);
+      const { fresh, geocoded } = await buildFresh(
+        name, address, addressNumber, neighborhood, city, data.uf, postalCode, phone, override.googleMapsUrl ?? null, cnaeActive,
+      );
       if (!geocoded) {
         console.warn(`  [sem geocodificação] ${name} — ${formatFullAddress(fresh)}`);
         skippedNoGeo++;
@@ -300,7 +311,9 @@ async function main() {
         console.log(`  [atualizada] ${name} — ${addr}`);
         updated++;
       } else {
-        await prisma.store.create({ data: { cnpj, ...fresh, storeType: autoType, storeTypeAuto: true } });
+        await prisma.store.create({
+          data: { cnpj, ...fresh, storeType: autoType, storeTypeAuto: true, notes: override.notes ?? null },
+        });
         console.log(`  [criada] ${name} — ${addr}`);
         created++;
       }
@@ -308,8 +321,8 @@ async function main() {
     }
 
     // --- modo manual (sem CNPJ) ---
-    const { name, address, addressNumber, neighborhood, city, phone } = entry.data;
-    const { fresh, geocoded } = await buildFresh(name, address, addressNumber, neighborhood, city, 'PR', null, phone, true);
+    const { name, address, addressNumber, neighborhood, city, phone, googleMapsUrl, notes } = entry.data;
+    const { fresh, geocoded } = await buildFresh(name, address, addressNumber, neighborhood, city, 'PR', null, phone, googleMapsUrl, true);
     if (!geocoded) {
       console.warn(`  [sem geocodificação] ${name} — ${formatFullAddress(fresh)}`);
       skippedNoGeo++;
@@ -318,7 +331,7 @@ async function main() {
     const addr = formatFullAddress(fresh);
 
     if (dryRun) {
-      console.log(`  [dry-run, sem CNPJ] ${name} | ${addr} | precisão=${fresh.geocodePrecision}`);
+      console.log(`  [dry-run, sem CNPJ] ${name} | ${addr} | precisão=${fresh.geocodePrecision}${notes ? ` | notas="${notes}"` : ''}`);
       continue;
     }
 
@@ -336,7 +349,9 @@ async function main() {
       console.log(`  [atualizada, sem CNPJ] ${name} — ${addr}`);
       updated++;
     } else {
-      await prisma.store.create({ data: { cnpj: null, ...fresh, storeType: autoType, storeTypeAuto: true } });
+      await prisma.store.create({
+        data: { cnpj: null, ...fresh, storeType: autoType, storeTypeAuto: true, notes },
+      });
       console.log(`  [criada, sem CNPJ] ${name} — ${addr}`);
       created++;
     }
