@@ -200,7 +200,14 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
     return stores.filter((s) => {
       if (neighborhoodFilter && s.neighborhood !== neighborhoodFilter) return false;
       if (statusFilter && s.status !== statusFilter) return false;
-      if (kindFilter && s.establishmentKind !== kindFilter) return false;
+      if (kindFilter) {
+        if (s.establishmentKind !== kindFilter) return false;
+      } else if (s.establishmentKind === 'INDIVIDUAL_RESELLER') {
+        // Revendedor individual só aparece quando o filtro pede explicitamente —
+        // são muitos (maioria do CNAE de cosméticos) e poluiriam a visão padrão
+        // de loja física, que é o prospect de interesse na maior parte do tempo.
+        return false;
+      }
       return true;
     });
   }, [stores, neighborhoodFilter, statusFilter, kindFilter]);

@@ -21,6 +21,7 @@
 //   npx tsx scripts/import-stores.ts --max-parts 1    # smoke test: só a 1ª parte de cada arquivo
 //   npx tsx scripts/import-stores.ts --limit 5        # processa (geocodifica/grava) no máx. 5 lojas
 //   npx tsx scripts/import-stores.ts --per-city 20    # até 20 lojas por cidade, priorizando loja física
+//   npx tsx scripts/import-stores.ts --per-city 50 --only-resellers  # só revendedor individual (MEI)
 //   npx tsx scripts/import-stores.ts --period 2026-06 # usa uma pasta mensal específica
 //   npx tsx scripts/import-stores.ts --regeocode      # força regeocodificar tudo
 
@@ -83,6 +84,7 @@ interface CliOptions {
   maxParts: number | null;
   period: string | null;
   regeocode: boolean;
+  onlyResellers: boolean;
 }
 
 interface EstabRow {
@@ -107,11 +109,13 @@ function parseArgs(argv: string[]): CliOptions {
     maxParts: null,
     period: null,
     regeocode: false,
+    onlyResellers: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--dry-run') opts.dryRun = true;
     else if (arg === '--regeocode') opts.regeocode = true;
+    else if (arg === '--only-resellers') opts.onlyResellers = true;
     else if (arg === '--per-city') opts.perCity = Number.parseInt(argv[++i], 10);
     else if (arg === '--limit') opts.limit = Number.parseInt(argv[++i], 10);
     else if (arg === '--max-parts') opts.maxParts = Number.parseInt(argv[++i], 10);
@@ -555,6 +559,11 @@ async function upsertStores(rows: EstabRow[], razaoByBasico: Map<string, string>
  * revendedor é a maioria esmagadora no CNAE 4772-5/00, então sem essa ordenação
  * uma amostra de 20 sai quase toda de gente vendendo de casa, que é justamente
  * o que menos interessa pra uma rota de visita.
+ *
+ * `--only-resellers` inverte esse propósito: usado quando loja física já foi
+ * curada à mão (Google Maps) e só falta repor revendedor individual — nesse
+ * caso loja física do CNPJ bruto não interessa (é auto-classificada, menos
+ * confiável que a curadoria manual), então nem entra no pool.
  */
 function selectRows(
   rows: EstabRow[],
@@ -563,14 +572,18 @@ function selectRows(
 ): EstabRow[] {
   let pool = rows;
 
-  if (opts.perCity !== null) {
-    const isPhysical = (r: EstabRow) => {
-      const name = r.nomeFantasia || razaoByBasico.get(r.cnpjBasico) || '';
-      return classifyEstablishmentKind(`${name} ${razaoByBasico.get(r.cnpjBasico) ?? ''}`) === 'PHYSICAL_STORE';
-    };
+  const isPhysical = (r: EstabRow) => {
+    const name = r.nomeFantasia || razaoByBasico.get(r.cnpjBasico) || '';
+    return classifyEstablishmentKind(`${name} ${razaoByBasico.get(r.cnpjBasico) ?? ''}`) === 'PHYSICAL_STORE';
+  };
 
+  if (opts.onlyResellers) {
+    pool = rows.filter((r) => !isPhysical(r));
+  }
+
+  if (opts.perCity !== null) {
     const byCity = new Map<string, EstabRow[]>();
-    for (const r of rows) {
+    for (const r of pool) {
       const list = byCity.get(r.city);
       if (list) list.push(r);
       else byCity.set(r.city, [r]);
@@ -580,14 +593,20 @@ function selectRows(
     for (const city of MVP_CITIES) {
       const list = byCity.get(city) ?? [];
       const active = list.filter((r) => r.active);
-      const physical = active.filter(isPhysical);
-      const resellers = active.filter((r) => !isPhysical(r));
-      const picked = [...physical, ...resellers].slice(0, opts.perCity);
+      let picked: EstabRow[];
+      if (opts.onlyResellers) {
+        picked = active.slice(0, opts.perCity);
+        console.log(`  ${city}: ${picked.length} revendedores selecionados de ${active.length} ativos`);
+      } else {
+        const physical = active.filter(isPhysical);
+        const resellers = active.filter((r) => !isPhysical(r));
+        picked = [...physical, ...resellers].slice(0, opts.perCity);
+        console.log(
+          `  ${city}: ${picked.length} selecionadas de ${active.length} ativas ` +
+            `(${Math.min(physical.length, picked.length)} lojas físicas disponíveis: ${physical.length})`,
+        );
+      }
       pool.push(...picked);
-      console.log(
-        `  ${city}: ${picked.length} selecionadas de ${active.length} ativas ` +
-          `(${Math.min(physical.length, picked.length)} lojas físicas disponíveis: ${physical.length})`,
-      );
     }
   }
 
