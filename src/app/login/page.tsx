@@ -7,7 +7,7 @@ export default async function LoginPage() {
   if (session) redirect('/');
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
+    <main className="safe-top safe-bottom safe-x flex min-h-screen items-center justify-center p-4">
       <div className="holo-panel holo-corners rise relative w-full max-w-sm rounded-sm p-6">
         <p className="hud-label text-gold">Sistema de Geoprospecção</p>
         <h1 className="mt-1 text-xl font-bold text-ink">Vitiss Cosméticos — Melhorança</h1>

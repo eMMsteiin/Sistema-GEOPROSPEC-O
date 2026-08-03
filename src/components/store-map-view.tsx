@@ -409,9 +409,9 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                 : `${filtered.length} loja${filtered.length === 1 ? '' : 's'} encontrada${filtered.length === 1 ? '' : 's'}`}
             </p>
 
-            {/* Tabela (desktop) */}
+            {/* Tabela (telas largas — a partir de onde 5 colunas cabem sem apertar) */}
             {filtered.length > 0 && (
-              <div className="holo-panel hidden overflow-x-auto rounded-sm md:block">
+              <div className="holo-panel hidden overflow-x-auto rounded-sm lg:block">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b font-mono text-[10px] uppercase tracking-wider text-gold-dim" style={{ borderColor: 'var(--panel-border)' }}>
@@ -447,7 +447,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                           {store.distanceKm !== null ? `${store.distanceKm.toLocaleString('pt-BR')} km` : '—'}
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CHIP[store.status]}`}>
+                          <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CHIP[store.status]}`}>
                             {STATUS_LABELS[store.status]}
                           </span>
                         </td>
@@ -458,9 +458,9 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
               </div>
             )}
 
-            {/* Cards (mobile) */}
+            {/* Cards (celular e tablet — 1 coluna em telas estreitas, 2 quando sobra espaço) */}
             {filtered.length > 0 && (
-              <ul className="space-y-2 md:hidden">
+              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:hidden">
                 {filtered.map((store, i) => (
                   <li key={store.id} className="rise" style={{ '--d': `${260 + Math.min(i, 10) * 45}ms` } as React.CSSProperties}>
                     <button
@@ -480,7 +480,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                         {store.distanceKm !== null && `${store.distanceKm.toLocaleString('pt-BR')} km`}
                         {store.avgIncome !== null && ` · renda ${brl(store.avgIncome)}`}
                       </span>
-                      <span className={`mt-1.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CHIP[store.status]}`}>
+                      <span className={`mt-1.5 inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CHIP[store.status]}`}>
                         {STATUS_LABELS[store.status]}
                       </span>
                     </button>
@@ -497,7 +497,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
         <>
           <div className="backdrop-anim fixed inset-0 z-[1000] bg-black/60 backdrop-blur-[2px]" onClick={closePanel} aria-hidden />
           <div
-            className="holo-corners drawer-anim fixed inset-x-0 bottom-0 z-[1001] max-h-[85vh] overflow-y-auto border-t p-5 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 sm:max-h-none sm:w-[400px] sm:border-t-0 sm:border-l"
+            className="holo-corners drawer-anim safe-bottom safe-x fixed inset-x-0 bottom-0 z-[1001] max-h-[85vh] overflow-y-auto border-t p-5 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 sm:max-h-none sm:w-[400px] sm:border-t-0 sm:border-l"
             style={{ background: 'rgba(23,11,13,0.97)', borderColor: 'var(--panel-border)' }}
           >
             <div className="mb-4 flex items-start justify-between gap-3">

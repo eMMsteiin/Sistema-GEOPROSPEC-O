@@ -131,6 +131,29 @@ body::before {
   outline-offset: 2px;
 }
 
+/* ── Safe areas (PWA instalado) ──────────────────────────────────────────
+   O manifest usa display:standalone e o layout tem viewport-fit=cover, então
+   o conteúdo desenha embaixo do notch/status bar (topo) e da barra de gestos
+   (embaixo) quando instalado na tela de início. Em navegador comum os env()
+   valem 0, então não muda nada ali.
+   Usa margin, não padding: os elementos que recebem essas classes já têm o
+   próprio padding (p-5, py-3 etc.) — margin soma um respiro extra por fora
+   sem substituir esse padding (padding colidiria e zeraria o espaçamento
+   original em telas sem notch, já que a regra é mais específica que a
+   utilitária do Tailwind). Em posição fixed, margin no lado ancorado (ex.:
+   margin-bottom com bottom:0) também empurra o elemento pra dentro, então
+   funciona igual pra gaveta fixa do painel de detalhe. */
+.safe-top {
+  margin-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  margin-bottom: env(safe-area-inset-bottom);
+}
+.safe-x {
+  margin-left: env(safe-area-inset-left);
+  margin-right: env(safe-area-inset-right);
+}
+
 @keyframes holo-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }

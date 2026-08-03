@@ -14,7 +14,7 @@ export default function HomeShell({ userName }: { userName: string }) {
   return (
     <div className="flex min-h-screen flex-col">
       <header
-        className="flex items-center justify-between gap-4 border-b px-4 py-3 sm:px-6"
+        className="safe-top flex items-center justify-between gap-4 border-b px-4 py-3 sm:px-6"
         style={{ borderColor: 'var(--panel-border)', background: 'rgba(11,7,8,0.55)' }}
       >
         <div className="min-w-0">
