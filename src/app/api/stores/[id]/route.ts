@@ -2,13 +2,14 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { cityTier } from '@/lib/pdv';
-import { EstablishmentKind, ProspectStatus, StoreType } from '@prisma/client';
+import { EstablishmentKind, ProspectStatus, StoreProfile, StoreType } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 
 // Derivados do enum do Prisma — ver comentário em ../route.ts.
 const PROSPECT_STATUSES = Object.values(ProspectStatus);
 const STORE_TYPES = Object.values(StoreType);
 const ESTABLISHMENT_KINDS = Object.values(EstablishmentKind);
+const STORE_PROFILES = Object.values(StoreProfile);
 
 export async function PATCH(
   req: Request,
@@ -44,6 +45,14 @@ export async function PATCH(
     }
     data.establishmentKind = body.establishmentKind;
     data.establishmentKindAuto = false;
+  }
+
+  if ('profiles' in body) {
+    if (!Array.isArray(body.profiles) || !body.profiles.every((p: unknown) => STORE_PROFILES.includes(p as StoreProfile))) {
+      return NextResponse.json({ error: 'Perfil de loja inválido' }, { status: 400 });
+    }
+    data.profiles = { set: body.profiles };
+    data.profilesAuto = false;
   }
 
   if ('notes' in body) {

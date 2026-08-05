@@ -38,6 +38,7 @@ import {
   IBGE_CODE_BY_CITY,
   MVP_CITIES,
   WAREHOUSE,
+  classifyProfiles,
   classifyStoreType,
   formatFullAddress,
   haversineKm,
@@ -311,8 +312,17 @@ async function main() {
         console.log(`  [atualizada] ${name} — ${addr}`);
         updated++;
       } else {
+        const notes = override.notes ?? null;
         await prisma.store.create({
-          data: { cnpj, ...fresh, storeType: autoType, storeTypeAuto: true, notes: override.notes ?? null },
+          data: {
+            cnpj,
+            ...fresh,
+            storeType: autoType,
+            storeTypeAuto: true,
+            notes,
+            profiles: classifyProfiles({ name, notes }),
+            profilesAuto: true,
+          },
         });
         console.log(`  [criada] ${name} — ${addr}`);
         created++;
@@ -350,7 +360,15 @@ async function main() {
       updated++;
     } else {
       await prisma.store.create({
-        data: { cnpj: null, ...fresh, storeType: autoType, storeTypeAuto: true, notes },
+        data: {
+          cnpj: null,
+          ...fresh,
+          storeType: autoType,
+          storeTypeAuto: true,
+          notes,
+          profiles: classifyProfiles({ name, notes }),
+          profilesAuto: true,
+        },
       });
       console.log(`  [criada, sem CNPJ] ${name} — ${addr}`);
       created++;

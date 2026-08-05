@@ -10,7 +10,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
-import type { EstablishmentKind, GeocodePrecision, ProspectStatus, StoreType } from '@prisma/client';
+import type { EstablishmentKind, GeocodePrecision, ProspectStatus, StoreProfile, StoreType } from '@prisma/client';
 import { formatFullAddress, googleMapsSearchUrl } from '@/lib/pdv';
 
 const StoreMap = dynamic(() => import('./store-map'), {
@@ -41,6 +41,8 @@ export interface StoreWithIncome {
   storeTypeAuto: boolean;
   establishmentKind: EstablishmentKind;
   establishmentKindAuto: boolean;
+  profiles: StoreProfile[];
+  profilesAuto: boolean;
   status: ProspectStatus;
   phone: string | null;
   notes: string | null;
@@ -59,6 +61,23 @@ const STATUS_LABELS: Record<ProspectStatus, string> = {
   DECLINED: 'Recusou',
   REQUESTED_TO_REPS: 'Solicitada para os representantes',
 };
+
+/**
+ * Perfil: segunda dimensão de classificação, independente de storeType/tipo —
+ * "que tipo de loja é essa, como abordar comercialmente" em vez de "pode
+ * vender Vitiss". Uma loja pode ter mais de um perfil ao mesmo tempo.
+ */
+const PROFILE_LABELS: Record<StoreProfile, string> = {
+  BOUTIQUE_BAIRRO: 'Boutique de bairro',
+  FORNECEDORA_PROFISSIONAL: 'Fornecedora profissional',
+  REVENDA_MULTI_CATALOGO: 'Revenda multi-catálogo',
+  HIBRIDA_SERVICO: 'Híbrida de serviço',
+  POPULAR_DESCONTO: 'Popular/desconto',
+  REDE_REGIONAL: 'Rede regional',
+  CRUZAMENTO_RAMO: 'Cruzamento de ramo',
+};
+
+const PROFILE_VALUES = Object.keys(PROFILE_LABELS) as StoreProfile[];
 
 const STATUS_CHIP: Record<ProspectStatus, string> = {
   NOT_VISITED: 'bg-ink-dim/15 text-ink-dim',
@@ -149,6 +168,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
   const [neighborhoodFilter, setNeighborhoodFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [kindFilter, setKindFilter] = useState('');
+  const [profileFilter, setProfileFilter] = useState('');
   const [satellite, setSatellite] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -200,6 +220,7 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
     return stores.filter((s) => {
       if (neighborhoodFilter && s.neighborhood !== neighborhoodFilter) return false;
       if (statusFilter && s.status !== statusFilter) return false;
+      if (profileFilter && !s.profiles.includes(profileFilter as StoreProfile)) return false;
       if (kindFilter) {
         if (s.establishmentKind !== kindFilter) return false;
       } else if (s.establishmentKind === 'INDIVIDUAL_RESELLER') {
@@ -210,13 +231,14 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
       }
       return true;
     });
-  }, [stores, neighborhoodFilter, statusFilter, kindFilter]);
+  }, [stores, neighborhoodFilter, statusFilter, profileFilter, kindFilter]);
 
-  const hasFilters = Boolean(neighborhoodFilter || statusFilter || kindFilter);
+  const hasFilters = Boolean(neighborhoodFilter || statusFilter || profileFilter || kindFilter);
 
   const clearFilters = () => {
     setNeighborhoodFilter('');
     setStatusFilter('');
+    setProfileFilter('');
     setKindFilter('');
   };
 
@@ -345,6 +367,18 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                 {(Object.keys(STATUS_LABELS) as ProspectStatus[]).map((s) => (
                   <option key={s} value={s}>
                     {STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-wider text-gold-dim">
+              Perfil
+              <select className={selectClass} value={profileFilter} onChange={(e) => setProfileFilter(e.target.value)}>
+                <option value="">Todos</option>
+                {PROFILE_VALUES.map((p) => (
+                  <option key={p} value={p}>
+                    {PROFILE_LABELS[p]}
                   </option>
                 ))}
               </select>
@@ -706,6 +740,40 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                   ))}
                 </div>
                 {selected.establishmentKindAuto && (
+                  <p className="mt-1 text-[11px] text-ink-dim">classificação automática — toque pra corrigir</p>
+                )}
+              </div>
+
+              <div>
+                <span className="hud-label mb-1.5 block text-gold-dim">Perfil da loja</span>
+                <p className="mb-1.5 text-[11px] leading-snug text-ink-dim">
+                  Como abordar comercialmente — pode marcar mais de um.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {PROFILE_VALUES.map((value) => {
+                    const active = selected.profiles.includes(value);
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        disabled={saving}
+                        onClick={() => {
+                          const next = active
+                            ? selected.profiles.filter((p) => p !== value)
+                            : [...selected.profiles, value];
+                          patchStore(selected.id, { profiles: next });
+                        }}
+                        className={`rounded-sm border px-2 py-1.5 text-sm font-medium transition-colors ${
+                          active ? 'border-glow bg-red-mid text-ink' : 'holo-input text-ink-dim hover:text-ink'
+                        }`}
+                        style={active ? { boxShadow: '0 0 10px rgba(221,60,86,0.35)' } : undefined}
+                      >
+                        {PROFILE_LABELS[value]}
+                      </button>
+                    );
+                  })}
+                </div>
+                {selected.profilesAuto && (
                   <p className="mt-1 text-[11px] text-ink-dim">classificação automática — toque pra corrigir</p>
                 )}
               </div>

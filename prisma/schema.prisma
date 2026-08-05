@@ -34,6 +34,20 @@ enum EstablishmentKind {
   INDIVIDUAL_RESELLER
 }
 
+/// Segunda dimensão de classificação, independente de StoreType: não responde
+/// "pode vender Vitiss" (isso é o tipo/StoreType), responde "que tipo de loja
+/// é essa e como abordar comercialmente". Uma loja pode ter vários perfis ao
+/// mesmo tempo (ex.: Boutique de Bairro + Rede Regional).
+enum StoreProfile {
+  BOUTIQUE_BAIRRO // pequena, atendimento pessoal, nota alta, poucas dezenas-centenas de avaliações
+  FORNECEDORA_PROFISSIONAL // atende profissional de salão além do consumidor final, 500+ avaliações
+  REVENDA_MULTI_CATALOGO // revende 2+ marcas normalmente exclusivas (Natura/Avon/Eudora/Boticário...) por conta própria
+  HIBRIDA_SERVICO // salão/estética com prateleira de produtos junto
+  POPULAR_DESCONTO // posicionamento de preço baixo, não combina com o ticket médio da Vitiss
+  REDE_REGIONAL // 2+ unidades confirmadas da mesma marca/dono
+  CRUZAMENTO_RAMO // negócio principal não é cosmético (celular, moda, papelaria...), cosmético é categoria secundária
+}
+
 /// Quão confiável é a coordenada gravada. O Nominatim (OpenStreetMap) tem
 /// cobertura fraca de número de porta em rua residencial brasileira, então o
 /// pino costuma ser aproximado — a UI precisa dizer isso em vez de fingir
@@ -66,6 +80,8 @@ model Store {
   storeTypeAuto         Boolean           @default(true) // false = corrigido manualmente, import não sobrescreve mais
   establishmentKind     EstablishmentKind @default(PHYSICAL_STORE)
   establishmentKindAuto Boolean           @default(true) // false = corrigido manualmente, import não sobrescreve mais
+  profiles              StoreProfile[]    @default([]) // pode ter mais de um ao mesmo tempo
+  profilesAuto          Boolean           @default(true) // false = corrigido manualmente, import não sobrescreve mais
   status                ProspectStatus    @default(NOT_VISITED)
   phone                 String?
   notes                 String?

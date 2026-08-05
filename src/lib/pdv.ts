@@ -107,6 +107,74 @@ export function classifyEstablishmentKind(name: string): 'PHYSICAL_STORE' | 'IND
 }
 
 // ---------------------------------------------------------------------------
+// Perfil (StoreProfile) — segunda dimensão de classificação, independente do
+// storeType. Responde "que tipo de loja é essa, como abordar comercialmente",
+// não "pode vender Vitiss". Uma loja pode ter vários perfis ao mesmo tempo.
+// ---------------------------------------------------------------------------
+
+export type StoreProfileValue =
+  | 'BOUTIQUE_BAIRRO'
+  | 'FORNECEDORA_PROFISSIONAL'
+  | 'REVENDA_MULTI_CATALOGO'
+  | 'HIBRIDA_SERVICO'
+  | 'POPULAR_DESCONTO'
+  | 'REDE_REGIONAL'
+  | 'CRUZAMENTO_RAMO';
+
+const POPULAR_DESCONTO_RE = /tudo\s+(a|por)\s+r\$\s?\d/i;
+const HIBRIDA_SERVICO_RE = /sal[ãa]o(?!\s+shopping)|depila[çc][ãa]o|manicure|est[ée]tica/i;
+const REDE_RE = /\brede\b/i;
+const CRUZAMENTO_RAMO_RE = /celular|papelaria|\bmoda\b|\broupas?\b|\bcal[çc]ados?\b|lingerie|variedades/i;
+const RESALE_BRANDS = ['natura', 'avon', 'eudora', 'boticário', 'boticario', 'mary kay', 'jequiti', 'alfaparf'];
+
+function countBrandMentions(text: string): number {
+  const lower = text.toLowerCase();
+  return RESALE_BRANDS.filter((b) => lower.includes(b)).length;
+}
+
+/**
+ * Extrai nota e nº de avaliações do formato "Google: 4.7★ (123 avaliações)"
+ * usado nas observações — não é um campo estruturado, é texto livre digitado
+ * durante a curadoria, então é best-effort (null quando não casa o padrão,
+ * ex.: "sem avaliações no Google ainda").
+ */
+function parseGoogleRating(notes: string): { rating: number; reviews: number } | null {
+  const m = notes.match(/Google:\s*([\d.]+)★\s*\((\d[\d.]*)\s*avalia/i);
+  if (!m) return null;
+  const rating = Number.parseFloat(m[1]);
+  const reviews = Number.parseInt(m[2].replace(/\./g, ''), 10);
+  if (!Number.isFinite(rating) || !Number.isFinite(reviews)) return null;
+  return { rating, reviews };
+}
+
+/**
+ * Classificação automática de perfil por padrões no nome e nas observações
+ * (que, na curadoria feita neste projeto, quase sempre trazem a nota e nº de
+ * avaliações do Google, e às vezes um aviso textual como "REDE:" ou
+ * "VERIFICAR EM CAMPO: revende Natura/Avon/..."). Sempre corrigível
+ * manualmente na UI (profilesAuto = false trava contra reimport).
+ */
+export function classifyProfiles(store: { name: string; notes: string | null }): StoreProfileValue[] {
+  const profiles = new Set<StoreProfileValue>();
+  const notes = store.notes ?? '';
+  const haystack = `${store.name} ${notes}`;
+
+  if (REDE_RE.test(notes)) profiles.add('REDE_REGIONAL');
+  if (POPULAR_DESCONTO_RE.test(notes)) profiles.add('POPULAR_DESCONTO');
+  if (HIBRIDA_SERVICO_RE.test(haystack)) profiles.add('HIBRIDA_SERVICO');
+  if (countBrandMentions(notes) >= 2) profiles.add('REVENDA_MULTI_CATALOGO');
+  if (CRUZAMENTO_RAMO_RE.test(store.name)) profiles.add('CRUZAMENTO_RAMO');
+
+  const rating = parseGoogleRating(notes);
+  if (rating) {
+    if (rating.reviews >= 500) profiles.add('FORNECEDORA_PROFISSIONAL');
+    else if (rating.rating >= 4.7 && rating.reviews >= 15) profiles.add('BOUTIQUE_BAIRRO');
+  }
+
+  return [...profiles];
+}
+
+// ---------------------------------------------------------------------------
 // Endereço
 // ---------------------------------------------------------------------------
 
