@@ -124,6 +124,52 @@ const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 const formatCnpj = (c: string | null) =>
   c && c.length === 14 ? `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}` : c;
 
+function WhatsAppIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" className={className}>
+      <path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.79 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.8 14.02c-.24.68-1.4 1.32-1.93 1.35-.5.03-1.02.21-3.44-.75-2.91-1.15-4.78-4.06-4.93-4.25-.14-.19-1.18-1.57-1.18-3 0-1.42.75-2.12 1.01-2.41.26-.29.57-.36.76-.36.19 0 .38 0 .55.01.18.01.42-.07.65.5.24.58.81 2 .88 2.14.07.14.12.31.02.5-.1.19-.15.31-.29.48-.14.17-.3.38-.43.51-.14.14-.29.29-.12.57.17.29.75 1.24 1.62 2.01 1.11.99 2.05 1.3 2.33 1.45.29.14.46.12.63-.07.17-.19.72-.84.91-1.13.19-.29.38-.24.64-.14.26.1 1.66.79 1.94.93.29.14.48.21.55.33.07.12.07.68-.17 1.36z" />
+    </svg>
+  );
+}
+
+function MapsPinIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" className={className}>
+      <path d="M12 2C7.86 2 4.5 5.36 4.5 9.5c0 5.25 6.32 11.34 6.59 11.6a1.25 1.25 0 0 0 1.82 0c.27-.26 6.59-6.35 6.59-11.6C19.5 5.36 16.14 2 12 2zm0 10.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" />
+    </svg>
+  );
+}
+
+/** Botão redondo de ação rápida — usado pros ícones de Maps e WhatsApp no painel de detalhe. */
+function IconButton({
+  onClick,
+  disabled,
+  title,
+  className,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  title: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-opacity ${
+        disabled ? 'cursor-not-allowed' : 'hover:opacity-85'
+      } ${className ?? ''}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function TierDot({ tier }: { tier: number }) {
   return (
     <span
@@ -563,6 +609,34 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
               </button>
             </div>
 
+            {/* Ações rápidas — Maps sempre disponível (link confirmado ou busca pelo
+                endereço); WhatsApp só clicável quando a loja tem telefone confirmado,
+                senão fica com o botão apagado em vez de sumir. */}
+            <div className="mb-4 flex items-center gap-2">
+              {mapsUrlFor(selected) && (
+                <IconButton
+                  title={selected.googleMapsUrl ? 'Abrir no Google Maps (link confirmado)' : 'Abrir no Google Maps (busca pelo endereço)'}
+                  onClick={() => window.open(mapsUrlFor(selected) as string, '_blank', 'noopener,noreferrer')}
+                  className="holo-input hover:border-gold"
+                >
+                  <MapsPinIcon className="text-glow" />
+                </IconButton>
+              )}
+              <IconButton
+                title={selected.phone ? 'Abrir conversa no WhatsApp' : 'Sem telefone confirmado'}
+                disabled={!selected.phone}
+                onClick={() => selected.phone && window.open(waLink(selected.phone), '_blank', 'noopener,noreferrer')}
+                className={selected.phone ? 'bg-[#25D366]' : 'bg-[#25D366]/20'}
+              >
+                <WhatsAppIcon className={selected.phone ? 'text-white' : 'text-white/40'} />
+              </IconButton>
+              {selected.phone && (
+                <span className="text-[13px] text-ink-dim" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {selected.phone}
+                </span>
+              )}
+            </div>
+
             <div className="holo-panel rounded-sm p-3" style={{ background: 'rgba(74,10,23,0.45)' }}>
               <p className="hud-label text-gold-dim">Renda média da região</p>
               <p className="mt-0.5 text-xl font-bold text-gold" style={{ fontVariantNumeric: 'tabular-nums' }}>
@@ -586,17 +660,6 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                   </p>
                 )}
                 <div className="mt-1.5 flex flex-wrap items-center gap-3">
-                  {mapsUrlFor(selected) && (
-                    <a
-                      href={mapsUrlFor(selected) as string}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] text-gold hover:underline"
-                      title={selected.googleMapsUrl ? 'Link confirmado' : 'Busca aproximada pelo endereço'}
-                    >
-                      Abrir no Google Maps →
-                    </a>
-                  )}
                   <a
                     href={shareUrl(selected)}
                     target="_blank"
@@ -612,24 +675,6 @@ export default function StoreMapView({ city, onBack }: { city: string; onBack: (
                 <dt className="hud-label text-gold-dim">Distância do armazém</dt>
                 <dd className="text-ink" style={{ fontVariantNumeric: 'tabular-nums' }}>
                   {selected.distanceKm !== null ? `${selected.distanceKm.toLocaleString('pt-BR')} km` : '—'}
-                </dd>
-              </div>
-              <div>
-                <dt className="hud-label text-gold-dim">Telefone (WhatsApp)</dt>
-                <dd>
-                  {selected.phone ? (
-                    <a
-                      href={waLink(selected.phone)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-gold hover:underline"
-                      title="Abrir conversa no WhatsApp"
-                    >
-                      {selected.phone}
-                    </a>
-                  ) : (
-                    <span className="text-ink">—</span>
-                  )}
                 </dd>
               </div>
               <div>
