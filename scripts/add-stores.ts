@@ -42,6 +42,7 @@ import {
   classifyStoreType,
   formatFullAddress,
   haversineKm,
+  normalizeGoogleMapsUrl,
   normalizeHouseNumber,
   normalizeName,
 } from '../src/lib/pdv';
@@ -288,8 +289,9 @@ async function main() {
       const phone = phoneDigits.length >= 10 ? `(${phoneDigits.slice(0, 2)}) ${phoneDigits.slice(2)}` : null;
       const cnaeActive = data.descricao_situacao_cadastral === 'ATIVA';
 
+      const googleMapsUrl = override.googleMapsUrl ? normalizeGoogleMapsUrl(override.googleMapsUrl, name) : null;
       const { fresh, geocoded } = await buildFresh(
-        name, address, addressNumber, neighborhood, city, data.uf, postalCode, phone, override.googleMapsUrl ?? null, cnaeActive,
+        name, address, addressNumber, neighborhood, city, data.uf, postalCode, phone, googleMapsUrl, cnaeActive,
       );
       if (!geocoded) {
         console.warn(`  [sem geocodificação] ${name} — ${formatFullAddress(fresh)}`);
@@ -331,7 +333,8 @@ async function main() {
     }
 
     // --- modo manual (sem CNPJ) ---
-    const { name, address, addressNumber, neighborhood, city, phone, googleMapsUrl, notes } = entry.data;
+    const { name, address, addressNumber, neighborhood, city, phone, notes } = entry.data;
+    const googleMapsUrl = entry.data.googleMapsUrl ? normalizeGoogleMapsUrl(entry.data.googleMapsUrl, name) : null;
     const { fresh, geocoded } = await buildFresh(name, address, addressNumber, neighborhood, city, 'PR', null, phone, googleMapsUrl, true);
     if (!geocoded) {
       console.warn(`  [sem geocodificação] ${name} — ${formatFullAddress(fresh)}`);

@@ -244,6 +244,23 @@ export function googleMapsSearchUrl(s: AddressParts): string | null {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
+const LEGACY_PLACE_ID_URL_RE = /^https:\/\/www\.google\.com\/maps\/place\/\?q=place_id:(.+)$/;
+
+/**
+ * Normaliza um link confirmado do Google Maps (place_id) pro formato oficial
+ * documentado (query + query_place_id) — o formato "/maps/place/?q=place_id:X"
+ * abre certo no navegador, mas quando o celular repassa o link direto pro app
+ * nativo do Google Maps (padrão em iOS/Android), o parser de deep link do app
+ * não reconhece esse parâmetro e mostra "nenhum resultado encontrado", mesmo
+ * sendo o place_id certo. Detecta e corrige o formato antigo; qualquer link
+ * já no formato certo (ou outro formato) passa direto sem mudança.
+ */
+export function normalizeGoogleMapsUrl(url: string, storeName: string): string {
+  const m = url.match(LEGACY_PLACE_ID_URL_RE);
+  if (!m) return url;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(storeName)}&query_place_id=${m[1]}`;
+}
+
 /**
  * Armazém da distribuidora — Rua Canoinhas, 243, Borda do Campo, São José dos
  * Pinhais/PR. Geocodificado uma vez via Nominatim (nível de rua) e fixado aqui.
